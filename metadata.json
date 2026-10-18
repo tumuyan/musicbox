@@ -1,0 +1,6 @@
+{
+  "name": "Paper Strip Music Box",
+  "description": "An authentic mechanical paper strip music box simulator and composer inspired by vintage hand-cranked walnut music boxes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
