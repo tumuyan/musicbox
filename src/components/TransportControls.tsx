@@ -94,6 +94,19 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleProgressWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // deltaY > 0: wheel down/forward advances song steps
+    // deltaY < 0: wheel up/backward rewinds song steps
+    const stepDelta = e.deltaY > 0 ? 0.5 : -0.5;
+    const nextStep = Math.max(0, Math.min(currentSong.totalSteps, currentStep + stepDelta));
+    if (nextStep !== currentStep) {
+      onSeek(nextStep);
+      musicBoxSynth.playGearTick();
+    }
+  };
+
   const progressPercent = (currentStep / currentSong.totalSteps) * 100;
   const currentMeasure = Math.floor(currentStep / (currentSong.timeSignature[0] * 4)) + 1;
   const totalMeasures = Math.ceil(currentSong.totalSteps / (currentSong.timeSignature[0] * 4));
@@ -185,11 +198,17 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
             <Repeat className="w-4 h-4" />
           </button>
 
-          {/* Scrubber Timeline */}
-          <div className="flex items-center gap-2 pl-2">
-            <span className="text-xs font-mono text-stone-400 tabular-nums">
-              M{currentMeasure}/{totalMeasures}
-            </span>
+          {/* Scrubber Timeline with Mouse Wheel Scroll Support */}
+          <div 
+            onWheel={handleProgressWheel}
+            className="flex items-center gap-2.5 px-2.5 py-1 rounded-lg bg-stone-900/60 hover:bg-stone-800/80 border border-stone-800 hover:border-amber-700/60 transition-all cursor-pointer group select-none"
+            title="纸带进度条：直接在此滚动鼠标滚轮可步进/倒带，亦可拖拽进度滑块"
+          >
+            <div className="flex items-center gap-1.5 text-xs font-mono text-stone-400 tabular-nums whitespace-nowrap">
+              <span className="text-amber-400 font-medium">M{currentMeasure}/{totalMeasures}</span>
+              <span className="text-stone-600">·</span>
+              <span className="text-stone-300 text-[11px]">{Math.floor(currentStep)}/{currentSong.totalSteps}步</span>
+            </div>
             <input
               type="range"
               min={0}
@@ -197,7 +216,7 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
               step={0.5}
               value={currentStep}
               onChange={(e) => onSeek(parseFloat(e.target.value))}
-              className="w-32 md:w-48 h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              className="w-36 md:w-56 h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500 group-hover:h-2 transition-all"
             />
           </div>
         </div>

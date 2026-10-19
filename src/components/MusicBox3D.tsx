@@ -10,9 +10,10 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { SongData, MUSIC_BOX_SCALE, TOTAL_TINES } from '../types/musicBox';
 import { musicBoxSynth } from '../audio/MusicBoxSynth';
-import { Camera, RotateCcw, Eye, Disc, Cog } from 'lucide-react';
+import { Camera, RotateCcw, Eye, Disc, Cog, Sliders, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface MusicBox3DProps {
   song: SongData;
@@ -32,6 +33,18 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeView, setActiveView] = useState<'photo' | 'top' | 'front' | 'macro' | 'gears'>('photo');
 
+  // Lid angle and glass parameters state (Default: 100° open, half-reflective half-transparent)
+  const [lidAngle, setLidAngle] = useState<number>(100); // 0° to 120°
+  const [glassPreset, setGlassPreset] = useState<'mirror' | 'glass' | 'half' | 'frosted' | 'custom'>('half');
+  const [transmittance, setTransmittance] = useState<number>(50); // 50% transmittance
+  const [reflectivity, setReflectivity] = useState<number>(60); // 60% reflectivity
+  const [roughness, setRoughness] = useState<number>(5); // 0 to 100%
+  const [isControlsExpanded, setIsControlsExpanded] = useState<boolean>(false);
+
+  // Smooth lid animation refs (initialized at 100°)
+  const targetLidAngleRef = useRef<number>((100 * Math.PI) / 180);
+  const currentLidAngleRef = useRef<number>((100 * Math.PI) / 180);
+
   // Three.js internal references
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -43,18 +56,37 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   const gear1Ref = useRef<THREE.Group | null>(null);
   const gear2Ref = useRef<THREE.Group | null>(null);
   const gear3Ref = useRef<THREE.Group | null>(null);
+  const lidGroupRef = useRef<THREE.Group | null>(null);
+  const glassMaterialRef = useRef<THREE.MeshPhysicalMaterial | null>(null);
+  const glassMeshRef = useRef<THREE.Mesh | null>(null);
+  const reflectorRef = useRef<Reflector | null>(null);
   const paperCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const paperTextureRef = useRef<THREE.CanvasTexture | null>(null);
 
+  // Synchronous Step Reference for the render loop
+  const currentStepRef = useRef(currentStep);
+  useEffect(() => {
+    currentStepRef.current = currentStep;
+  }, [currentStep]);
+
+
+
   // Animation frame & orbit tracking
   const animFrameId = useRef<number | null>(null);
-  const isDraggingCrank = useRef<boolean>(false);
   const lastMousePos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isOrbiting = useRef<boolean>(false);
-  const cameraTarget = useRef<THREE.Vector3>(new THREE.Vector3(4, 2, 2));
-  const cameraDistance = useRef<number>(220);
-  const cameraPhi = useRef<number>(1.08); // Elevation (~62 deg)
-  const cameraTheta = useRef<number>(-0.72); // Azimuth (~-41 deg)
+
+
+
+  // Smooth camera interpolation targets and current positions
+  const currentCameraTarget = useRef<THREE.Vector3>(new THREE.Vector3(4, 2, 2));
+  const targetCameraTarget = useRef<THREE.Vector3>(new THREE.Vector3(4, 2, 2));
+  const currentCameraDistance = useRef<number>(220);
+  const targetCameraDistance = useRef<number>(220);
+  const currentCameraPhi = useRef<number>(1.08); // Elevation (~62 deg)
+  const targetCameraPhi = useRef<number>(1.08);
+  const currentCameraTheta = useRef<number>(-0.72); // Azimuth (~-41 deg)
+  const targetCameraTheta = useRef<number>(-0.72);
 
   // Track triggered steps to prevent duplicate triggers
   const lastTriggeredStep = useRef<number>(-1);
@@ -80,7 +112,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   }, [currentStep, song.holes, triggerTine]);
 
   // Geometry dimensions
-  const paperWidth = 46;    // Proportional paper strip width
+  const paperWidth = 46;    // Proportional paper strip width (mm)
   const slotWidth = 52;     // Front and back panel slot width
   const slotHeight = 5.0;   // 5mm vertical slot opening
   const paperY = 4.0;       // Center height of slot and paper
@@ -89,7 +121,23 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   const boxHeight = 44;
   const wallThick = 7;
 
-  // Render dynamic Paper Strip Texture onto a 2D canvas
+  // Physical specifications of paper strip & 1:1 pixel projection constants
+  const CANVAS_W = 2048;
+  const CANVAS_H = 326;
+  const TOTAL_ARC_LENGTH = 290.127; // mm
+  const READ_HEAD_FRACTION = 142.633 / TOTAL_ARC_LENGTH; // ~0.491624
+  const READ_HEAD_X = CANVAS_W * READ_HEAD_FRACTION;     // 1006.84 px
+  const STEP_PITCH_MM = 5.0;                             // 5mm per 16th-note step
+  const SCALE_X = CANVAS_W / TOTAL_ARC_LENGTH;           // 7.059 px/mm
+  const STEP_WIDTH_PX = STEP_PITCH_MM * SCALE_X;         // 35.295 px/step
+  const TILE_STEPS = 16;                                 // 1 Measure = 16 steps
+  const TOP_MARGIN = 49;
+  const BOTTOM_MARGIN = 49;
+  const USABLE_H = CANVAS_H - TOP_MARGIN - BOTTOM_MARGIN; // 228 px
+  const TINE_PITCH = USABLE_H / (TOTAL_TINES - 1);        // 7.862 px per tine track (30 tracks)
+  const HOLE_RADIUS = 3.4;                               // 3.4px radius (6.8px diameter, perfectly fits 7.86px tine pitch)
+
+  // Render dynamic Paper Strip Texture onto 2D canvas continuously within visible window (zero seams, no half-holes)
   const updatePaperTexture = useCallback(() => {
     const canvas = paperCanvasRef.current;
     const texture = paperTextureRef.current;
@@ -98,137 +146,141 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const w = canvas.width;
-    const h = canvas.height;
+    // 1. Fill base paper cardstock background
+    ctx.fillStyle = '#FAF6ED';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // Background: warm creamy antique cardstock
-    ctx.fillStyle = '#FAF7EE';
-    ctx.fillRect(0, 0, w, h);
+    // Subtle edge depth gradient near paper margins
+    const edgeGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    edgeGrad.addColorStop(0, 'rgba(0,0,0,0.06)');
+    edgeGrad.addColorStop(0.04, 'rgba(0,0,0,0)');
+    edgeGrad.addColorStop(0.96, 'rgba(0,0,0,0)');
+    edgeGrad.addColorStop(1, 'rgba(0,0,0,0.06)');
+    ctx.fillStyle = edgeGrad;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // Margins (留白边: 14% top, 14% bottom)
-    const topMargin = h * 0.14;
-    const bottomMargin = h * 0.14;
-    const usableHeight = h - topMargin - bottomMargin;
-    const tinePitch = usableHeight / (TOTAL_TINES - 1);
-
-    // Paper edge shadow
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, 'rgba(0,0,0,0.06)');
-    grad.addColorStop(0.05, 'rgba(0,0,0,0)');
-    grad.addColorStop(0.95, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.06)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-
-    // Margin demarcation dashed lines
-    ctx.strokeStyle = '#D8D0C0';
-    ctx.lineWidth = 1;
+    // 2. Margins boundary dashed lines
+    ctx.strokeStyle = '#D4CBB8';
+    ctx.lineWidth = 1.0;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(0, topMargin);
-    ctx.lineTo(w, topMargin);
-    ctx.moveTo(0, h - bottomMargin);
-    ctx.lineTo(w, h - bottomMargin);
+    ctx.moveTo(0, TOP_MARGIN);
+    ctx.lineTo(CANVAS_W, TOP_MARGIN);
+    ctx.moveTo(0, CANVAS_H - BOTTOM_MARGIN);
+    ctx.lineTo(CANVAS_W, CANVAS_H - BOTTOM_MARGIN);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Horizontal pitch lines (中间绘制格线)
-    ctx.strokeStyle = '#E5DFD2';
-    ctx.lineWidth = 0.8;
+    // 3. 30 Horizontal pitch guide lines (Intermediate grid lines for all 30 notes)
+    ctx.strokeStyle = '#E3DACB';
+    ctx.lineWidth = 0.75;
     for (let i = 0; i < TOTAL_TINES; i++) {
-      const y = h - bottomMargin - (i * tinePitch);
+      const y = CANVAS_H - BOTTOM_MARGIN - (i * TINE_PITCH);
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
+      ctx.lineTo(CANVAS_W, y);
       ctx.stroke();
     }
 
-    // Step window calculation
-    const visibleStepsWindow = 50;
-    const stepWidthPx = w / visibleStepsWindow;
-    const readPointFraction = 0.49;
-    const combReadOffsetSteps = visibleStepsWindow * readPointFraction;
-    const startStep = currentStep - combReadOffsetSteps;
+    // 4. Calculate visible step range (only ~58 steps visible at once, avoiding whole-song baking)
+    // x(s) = READ_HEAD_X + (s - currentStep) * STEP_WIDTH_PX
+    const startStep = currentStep - READ_HEAD_X / STEP_WIDTH_PX;
+    const endStep = currentStep + (CANVAS_W - READ_HEAD_X) / STEP_WIDTH_PX;
+    const minStep = Math.floor(startStep) - 2;
+    const maxStep = Math.ceil(endStep) + 2;
 
-    // Draw vertical beat / measure lines
-    for (let s = Math.floor(startStep); s <= startStep + visibleStepsWindow + 1; s++) {
-      const x = (s - startStep) * stepWidthPx;
-      if (x < 0 || x > w) continue;
+    // Vertical Measure & Beat Grid Lines
+    for (let s = minStep; s <= maxStep; s++) {
+      const x = READ_HEAD_X + (s - currentStep) * STEP_WIDTH_PX;
+      if (x < -20 || x > CANVAS_W + 20) continue;
 
-      const isMeasure = s >= 0 && s % 16 === 0;
+      const isMeasure = s >= 0 && s % TILE_STEPS === 0;
       const isBeat = s >= 0 && s % 4 === 0;
 
       if (isMeasure) {
-        ctx.strokeStyle = '#B6ABA0';
+        ctx.strokeStyle = '#B0A290';
         ctx.lineWidth = 1.8;
         ctx.beginPath();
-        ctx.moveTo(x, topMargin - 4);
-        ctx.lineTo(x, h - bottomMargin + 4);
+        ctx.moveTo(x, TOP_MARGIN - 5);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 5);
         ctx.stroke();
 
-        const barNum = Math.floor(s / 16) + 1;
-        ctx.fillStyle = '#8A7A68';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText(`M${barNum}`, x + 3, topMargin - 4);
+        const m = Math.floor(s / TILE_STEPS);
+        ctx.fillStyle = '#7C6C58';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`M${m + 1}`, x + 4, TOP_MARGIN - 7);
       } else if (isBeat) {
-        ctx.strokeStyle = '#CCC3B2';
+        ctx.strokeStyle = '#CCC1AD';
         ctx.lineWidth = 1.0;
         ctx.beginPath();
-        ctx.moveTo(x, topMargin);
-        ctx.lineTo(x, h - bottomMargin);
+        ctx.moveTo(x, TOP_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN);
         ctx.stroke();
-      } else {
-        ctx.strokeStyle = '#ECE5D8';
+      } else if (s >= 0) {
+        ctx.strokeStyle = '#ECE4D4';
         ctx.lineWidth = 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, topMargin);
-        ctx.lineTo(x, h - bottomMargin);
+        ctx.moveTo(x, TOP_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN);
         ctx.stroke();
       }
     }
 
-    // Read-head indicator line
-    const readHeadX = combReadOffsetSteps * stepWidthPx;
-    ctx.strokeStyle = 'rgba(217, 119, 6, 0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([2, 2]);
-    ctx.beginPath();
-    ctx.moveTo(readHeadX, 0);
-    ctx.lineTo(readHeadX, h);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Draw circular punched holes: "在midi note对应位置打圆孔，不管多长的音符都是一个圆孔"
-    const visibleHoles = song.holes.filter(
-      hole => hole.step >= startStep - 2 && hole.step <= startStep + visibleStepsWindow + 2
-    );
-
-    const holeRadius = 3.8;
+    // 5. Punched Circular Holes (True Physical Through-Holes with continuous coordinates - zero seam cuts!)
+    const visibleHoles = song.holes.filter(h => h.step >= minStep - 1 && h.step <= maxStep + 1);
 
     visibleHoles.forEach(hole => {
-      const x = (hole.step - startStep) * stepWidthPx;
-      const y = h - bottomMargin - (hole.tineIndex * tinePitch);
+      const hx = READ_HEAD_X + (hole.step - currentStep) * STEP_WIDTH_PX;
+      const hy = CANVAS_H - BOTTOM_MARGIN - (hole.tineIndex * TINE_PITCH);
 
+      if (hx < -HOLE_RADIUS * 2 || hx > CANVAS_W + HOLE_RADIUS * 2) return;
+
+      // A. Physical Cutout: Clears pixels to alpha = 0 (transparent through-hole)
       ctx.save();
-      // Hole interior (showing metal star-wheel & comb tine beneath paper!)
+      ctx.globalCompositeOperation = 'destination-out';
       ctx.beginPath();
-      ctx.arc(x, y, holeRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#221B14';
+      ctx.arc(hx, hy, HOLE_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = '#000000';
       ctx.fill();
+      ctx.restore();
 
-      // Hole edge shadow
-      ctx.strokeStyle = '#5E4E3C';
+      // B. Cardstock Cut Edge: punch impression, interior shadow and highlight
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+
+      // Outer mechanical punch impression ring
+      ctx.beginPath();
+      ctx.arc(hx, hy, HOLE_RADIUS + 0.5, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(170, 155, 135, 0.4)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+
+      // Top-left interior cut-edge shadow (paper thickness depth)
+      ctx.beginPath();
+      ctx.arc(hx, hy, HOLE_RADIUS + 0.1, Math.PI * 0.7, Math.PI * 1.8);
+      ctx.strokeStyle = 'rgba(50, 36, 22, 0.75)';
       ctx.lineWidth = 0.8;
       ctx.stroke();
 
-      // Inner rim bevel
+      // Bottom-right cut-edge highlight
       ctx.beginPath();
-      ctx.arc(x - 0.5, y - 0.5, holeRadius - 0.8, 0, Math.PI * 2);
-      ctx.strokeStyle = '#18120C';
+      ctx.arc(hx, hy, HOLE_RADIUS + 0.1, -Math.PI * 0.2, Math.PI * 0.7);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
       ctx.lineWidth = 0.6;
       ctx.stroke();
+
       ctx.restore();
     });
+
+    // 6. Hairline alignment indicator under the pressure plate at read line
+    ctx.strokeStyle = 'rgba(217, 119, 6, 0.35)';
+    ctx.lineWidth = 1.0;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(READ_HEAD_X, 0);
+    ctx.lineTo(READ_HEAD_X, CANVAS_H);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     texture.needsUpdate = true;
   }, [currentStep, song.holes]);
@@ -268,21 +320,44 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     return texture;
   }, []);
 
-  // Helper to build 3D Brass Spur Gears with teeth and axle hub
-  const createGearMesh = (radius: number, thickness: number, numTeeth: number, brassMaterial: THREE.Material): THREE.Group => {
+  // Helper to build 3D Brass Spur Gears with teeth, axle hub and optional open spokes
+  const createGearMesh = (
+    radius: number,
+    thickness: number,
+    numTeeth: number,
+    brassMaterial: THREE.Material,
+    hasSpokes: boolean = false
+  ): THREE.Group => {
     const gearGroup = new THREE.Group();
 
-    // Central circular hub
-    const hubGeo = new THREE.CylinderGeometry(radius * 0.82, radius * 0.82, thickness, 24);
-    hubGeo.rotateZ(Math.PI / 2);
-    const hubMesh = new THREE.Mesh(hubGeo, brassMaterial);
-    gearGroup.add(hubMesh);
-
-    // Axle collar
-    const collarGeo = new THREE.CylinderGeometry(radius * 0.32, radius * 0.32, thickness * 1.35, 16);
+    // Central axle collar
+    const collarGeo = new THREE.CylinderGeometry(radius * 0.28, radius * 0.28, thickness * 1.35, 16);
     collarGeo.rotateZ(Math.PI / 2);
     const collarMesh = new THREE.Mesh(collarGeo, brassMaterial);
     gearGroup.add(collarMesh);
+
+    if (hasSpokes) {
+      // Clockwork open spoked wheel: outer rim ring + cross spokes
+      const rimGeo = new THREE.CylinderGeometry(radius * 0.82, radius * 0.82, thickness, 32);
+      rimGeo.rotateZ(Math.PI / 2);
+      const rimMesh = new THREE.Mesh(rimGeo, brassMaterial);
+      gearGroup.add(rimMesh);
+
+      // 4 cut-out relief spokes
+      const spokeGeo = new THREE.BoxGeometry(thickness * 0.88, radius * 0.65, radius * 0.16);
+      for (let s = 0; s < 4; s++) {
+        const spokeAngle = (s / 4) * Math.PI;
+        const spokeMesh = new THREE.Mesh(spokeGeo, brassMaterial);
+        spokeMesh.rotation.x = spokeAngle;
+        gearGroup.add(spokeMesh);
+      }
+    } else {
+      // Solid disk hub
+      const hubGeo = new THREE.CylinderGeometry(radius * 0.82, radius * 0.82, thickness, 24);
+      hubGeo.rotateZ(Math.PI / 2);
+      const hubMesh = new THREE.Mesh(hubGeo, brassMaterial);
+      gearGroup.add(hubMesh);
+    }
 
     // Radial gear teeth
     const toothW = thickness * 0.95;
@@ -301,55 +376,151 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     return gearGroup;
   };
 
-  // Update camera position
-  const updateCameraPosition = useCallback(() => {
-    if (!cameraRef.current) return;
-    const phi = cameraPhi.current;
-    const theta = cameraTheta.current;
-    const r = cameraDistance.current;
+  // Apply glass transmittance, reflectivity, and roughness with TRUE optical planar mirror reflection
+  const applyGlassMaterial = useCallback((trans: number, refl: number, rough: number) => {
+    const t = trans / 100;
+    const r = refl / 100;
+    const ro = rough / 100;
 
-    cameraRef.current.position.x = cameraTarget.current.x + r * Math.sin(phi) * Math.sin(theta);
-    cameraRef.current.position.y = cameraTarget.current.y + r * Math.cos(phi);
-    cameraRef.current.position.z = cameraTarget.current.z + r * Math.sin(phi) * Math.cos(theta);
-    cameraRef.current.lookAt(cameraTarget.current);
+    // 1. Planar Mirror Reflection (Reflector: reflects inside of music box, paper strip & mechanism)
+    if (reflectorRef.current) {
+      const reflector = reflectorRef.current;
+      // Mirror reflector only active when reflectivity is high and not in pure glass observation mode
+      const isMirrorActive = r > 0.35 && t < 0.90;
+      reflector.visible = isMirrorActive;
+
+      if (isMirrorActive) {
+        // Opacity of mirror reflection: at t=0 (mirror mode), opacity=1.0; at t=0.5 (half mode), opacity ~0.4; at t=1, 0
+        const mirrorOpacity = Math.min(0.98, Math.max(0.0, r * (1.0 - t * 0.85)));
+        const mat = reflector.material as THREE.ShaderMaterial;
+        if (mat.uniforms && mat.uniforms.opacity) {
+          mat.uniforms.opacity.value = mirrorOpacity;
+        }
+        mat.transparent = true;
+        mat.depthWrite = mirrorOpacity >= 0.92;
+        reflector.renderOrder = 20;
+
+        if (mat.uniforms && mat.uniforms.color) {
+          mat.uniforms.color.value.setHex(0xD8DDE2);
+        }
+      }
+    }
+
+    // 2. Physical Glass Slab (Transmission & Thickness)
+    if (glassMaterialRef.current && glassMeshRef.current) {
+      const mat = glassMaterialRef.current;
+      const isGlassActive = t > 0.05 || r < 0.95;
+      glassMeshRef.current.visible = isGlassActive;
+
+      if (isGlassActive) {
+        mat.transmission = t * 0.96;
+        mat.opacity = Math.max(0.08, (1.0 - t) * 0.82);
+        mat.metalness = r * (1.0 - t * 0.88);
+        mat.roughness = Math.max(0.01, ro);
+        mat.reflectivity = r;
+        mat.clearcoat = Math.max(0.3, r);
+        mat.clearcoatRoughness = Math.max(0.01, ro * 0.4);
+        mat.transparent = true;
+        mat.depthWrite = false;
+        glassMeshRef.current.renderOrder = 10;
+
+        if (t > 0.6) {
+          mat.color.setHex(0xE8F2FC); // Clean optical crystal tint
+        } else if (r > 0.5) {
+          mat.color.setHex(0xD8DDE2); // Polished mercury silver
+        } else {
+          mat.color.setHex(0xCCCCCC);
+        }
+        mat.needsUpdate = true;
+      }
+    }
   }, []);
 
-  // Set preset camera views
+  // Update physical material when params change
+  useEffect(() => {
+    applyGlassMaterial(transmittance, reflectivity, roughness);
+  }, [transmittance, reflectivity, roughness, applyGlassMaterial]);
+
+  // Update lid rotation target when lidAngle changes
+  useEffect(() => {
+    targetLidAngleRef.current = (lidAngle * Math.PI) / 180;
+  }, [lidAngle]);
+
+  const selectGlassPreset = (preset: 'mirror' | 'glass' | 'half' | 'frosted') => {
+    setGlassPreset(preset);
+    if (preset === 'mirror') {
+      setTransmittance(0);
+      setReflectivity(98);
+      setRoughness(4);
+    } else if (preset === 'glass') {
+      setTransmittance(92);
+      setReflectivity(25);
+      setRoughness(4);
+    } else if (preset === 'half') {
+      setTransmittance(50);
+      setReflectivity(60);
+      setRoughness(5);
+    } else if (preset === 'frosted') {
+      setTransmittance(70);
+      setReflectivity(20);
+      setRoughness(48);
+    }
+  };
+
+  // Immediate Camera Position Update
+  const updateCameraPosition = useCallback(() => {
+    if (!cameraRef.current) return;
+    const phi = targetCameraPhi.current;
+    const theta = targetCameraTheta.current;
+    const r = targetCameraDistance.current;
+    const tgt = targetCameraTarget.current;
+
+    cameraRef.current.position.x = tgt.x + r * Math.sin(phi) * Math.sin(theta);
+    cameraRef.current.position.y = tgt.y + r * Math.cos(phi);
+    cameraRef.current.position.z = tgt.z + r * Math.sin(phi) * Math.cos(theta);
+    cameraRef.current.lookAt(tgt);
+
+    currentCameraPhi.current = phi;
+    currentCameraTheta.current = theta;
+    currentCameraDistance.current = r;
+    currentCameraTarget.current.copy(tgt);
+  }, []);
+
+  // Set preset camera views with smooth flight interpolation
   const setCameraPreset = useCallback((preset: 'photo' | 'top' | 'front' | 'macro' | 'gears') => {
     setActiveView(preset);
     if (preset === 'photo') {
       // Exactly matches reference photo perspective!
-      cameraDistance.current = 220;
-      cameraPhi.current = 1.08;
-      cameraTheta.current = -0.72;
-      cameraTarget.current.set(4, 2, 2);
+      targetCameraDistance.current = 220;
+      targetCameraPhi.current = 1.08;
+      targetCameraTheta.current = -0.72;
+      targetCameraTarget.current.set(4, 2, 2);
     } else if (preset === 'top') {
       // Top-down inspection of paper feed
-      cameraDistance.current = 200;
-      cameraPhi.current = 0.15;
-      cameraTheta.current = -Math.PI / 2;
-      cameraTarget.current.set(0, 2, 0);
+      targetCameraDistance.current = 210;
+      targetCameraPhi.current = 0.22;
+      targetCameraTheta.current = -Math.PI / 2;
+      targetCameraTarget.current.set(0, 2, 0);
     } else if (preset === 'front') {
       // Front slot entry view
-      cameraDistance.current = 180;
-      cameraPhi.current = 1.38;
-      cameraTheta.current = 0.02;
-      cameraTarget.current.set(0, 0, 30);
+      targetCameraDistance.current = 180;
+      targetCameraPhi.current = 1.38;
+      targetCameraTheta.current = 0.02;
+      targetCameraTarget.current.set(0, 0, 30);
     } else if (preset === 'macro') {
       // Close up of roller and pressure plate
-      cameraDistance.current = 110;
-      cameraPhi.current = 0.88;
-      cameraTheta.current = -0.58;
-      cameraTarget.current.set(4, 5, 0);
+      targetCameraDistance.current = 110;
+      targetCameraPhi.current = 0.88;
+      targetCameraTheta.current = -0.58;
+      targetCameraTarget.current.set(4, 5, 0);
     } else if (preset === 'gears') {
       // Close up of gear transmission
-      cameraDistance.current = 100;
-      cameraPhi.current = 0.95;
-      cameraTheta.current = -0.15;
-      cameraTarget.current.set(34, 6, -6);
+      targetCameraDistance.current = 100;
+      targetCameraPhi.current = 0.95;
+      targetCameraTheta.current = -0.15;
+      targetCameraTarget.current.set(34, 6, -6);
     }
-    updateCameraPosition();
-  }, [updateCameraPosition]);
+  }, []);
 
   // Build the complete 3D scene
   useEffect(() => {
@@ -537,11 +708,12 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     backTopPiece.castShadow = true;
     musicBoxGroup.add(backTopPiece);
 
-    // 5. Open Lid with Glass Mirror (Angled back ~70 deg like in photo)
+    // 5. Open Lid with Glass Mirror / Transparent Window
     const lidGroup = new THREE.Group();
     lidGroup.position.set(0, boxHeight / 2, backZ);
-    lidGroup.rotation.x = -Math.PI * 0.42;
+    lidGroup.rotation.x = -currentLidAngleRef.current;
     musicBoxGroup.add(lidGroup);
+    lidGroupRef.current = lidGroup;
 
     const lidFrameW = boxWidth;
     const lidFrameD = boxDepth;
@@ -551,33 +723,108 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
     const lidRailL = new THREE.Mesh(new THREE.BoxGeometry(12, lidFrameThick, lidFrameD), woodMat);
     lidRailL.position.set(-lidFrameW / 2 + 6, lidFrameThick / 2, lidFrameD / 2);
+    lidRailL.castShadow = true;
     lidGroup.add(lidRailL);
 
     const lidRailR = new THREE.Mesh(new THREE.BoxGeometry(12, lidFrameThick, lidFrameD), woodMat);
     lidRailR.position.set(lidFrameW / 2 - 6, lidFrameThick / 2, lidFrameD / 2);
+    lidRailR.castShadow = true;
     lidGroup.add(lidRailR);
 
     const lidRailFront = new THREE.Mesh(new THREE.BoxGeometry(lidInnerW, lidFrameThick, 12), woodMat);
     lidRailFront.position.set(0, lidFrameThick / 2, lidFrameD - 6);
+    lidRailFront.castShadow = true;
     lidGroup.add(lidRailFront);
 
     const lidRailBack = new THREE.Mesh(new THREE.BoxGeometry(lidInnerW, lidFrameThick, 12), woodMat);
     lidRailBack.position.set(0, lidFrameThick / 2, 6);
+    lidRailBack.castShadow = true;
     lidGroup.add(lidRailBack);
 
-    // Mirror pane
-    const mirrorGeo = new THREE.PlaneGeometry(lidInnerW, lidInnerD);
-    const mirrorMat = new THREE.MeshStandardMaterial({
-      color: 0xCCCCCC,
-      metalness: 0.88,
-      roughness: 0.08,
-      transparent: true,
-      opacity: 0.88,
+    // 5A. True Planar Mirror Reflector (真实光学镜面成像：对八音盒机芯、纸带、齿轮产生精准倒影)
+    const reflectorGeo = new THREE.PlaneGeometry(lidInnerW, lidInnerD);
+    const mirrorCustomShader = {
+      name: 'MusicBoxMirrorShader',
+      uniforms: {
+        color: { value: new THREE.Color(0xD8DDE2) },
+        tDiffuse: { value: null },
+        textureMatrix: { value: new THREE.Matrix4() },
+        opacity: { value: 1.0 },
+      },
+      vertexShader: /* glsl */ `
+        uniform mat4 textureMatrix;
+        varying vec4 vUv;
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        void main() {
+          vUv = textureMatrix * vec4( position, 1.0 );
+          gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+          #include <logdepthbuf_vertex>
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 color;
+        uniform sampler2D tDiffuse;
+        uniform float opacity;
+        varying vec4 vUv;
+        #include <logdepthbuf_pars_fragment>
+        float blendOverlay( float base, float blend ) {
+          return ( base < 0.5 ? ( 2.0 * base * blend ) : ( 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - blend ) ) );
+        }
+        vec3 blendOverlay( vec3 base, vec3 blend ) {
+          return vec3( blendOverlay( base.r, blend.r ), blendOverlay( base.g, blend.g ), blendOverlay( base.b, blend.b ) );
+        }
+        void main() {
+          #include <logdepthbuf_fragment>
+          vec4 base = texture2DProj( tDiffuse, vUv );
+          vec3 reflected = blendOverlay( base.rgb, color );
+          gl_FragColor = vec4( reflected, opacity );
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `,
+    };
+
+    const mirrorReflector = new Reflector(reflectorGeo, {
+      clipBias: 0.003,
+      textureWidth: 1024,
+      textureHeight: 1024,
+      color: 0xD8DDE2,
+      multisample: 4,
+      shader: mirrorCustomShader,
     });
-    const mirrorMesh = new THREE.Mesh(mirrorGeo, mirrorMat);
-    mirrorMesh.rotation.x = -Math.PI / 2;
-    mirrorMesh.position.set(0, 1.8, lidFrameD / 2);
-    lidGroup.add(mirrorMesh);
+    mirrorReflector.rotation.x = Math.PI / 2;
+    mirrorReflector.position.set(0, 1.3, lidFrameD / 2);
+    lidGroup.add(mirrorReflector);
+    reflectorRef.current = mirrorReflector;
+
+    // 5B. Physical Transparent Glass Slab (for transparent observation window mode)
+    const glassGeo = new THREE.BoxGeometry(lidInnerW, 1.8, lidInnerD);
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xE8F2FC,
+      metalness: 0.05,
+      roughness: 0.04,
+      transmission: 0.94,
+      transparent: true,
+      opacity: 0.20,
+      ior: 1.52,
+      reflectivity: 0.35,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.04,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const glassMesh = new THREE.Mesh(glassGeo, glassMat);
+    glassMesh.position.set(0, lidFrameThick / 2, lidFrameD / 2);
+    glassMesh.castShadow = false;
+    glassMesh.receiveShadow = false;
+    glassMesh.renderOrder = 10;
+    lidGroup.add(glassMesh);
+    glassMaterialRef.current = glassMat;
+    glassMeshRef.current = glassMesh;
+
+    // Apply active glass & mirror material settings immediately
+    applyGlassMaterial(transmittance, reflectivity, roughness);
 
     // Hinges
     const hingeGeo = new THREE.CylinderGeometry(1.5, 1.5, 10, 12);
@@ -609,6 +856,36 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     // Comb teeth rendering disabled per request ("先不要绘制音齿了")
     // =========================================================================
     tinesRef.current = [];
+
+    // =========================================================================
+    // Lower Paper Guide Plate & Star-Wheel Carrier (下托纸金属板与星轮阵列)
+    // Positioned directly UNDER the paper strip at y = 3.65 (so through-holes see real mechanism)
+    // =========================================================================
+    const lowerPlateGeo = new THREE.BoxGeometry(48, 0.65, 18);
+    const lowerPlateMesh = new THREE.Mesh(lowerPlateGeo, brassMat);
+    lowerPlateMesh.position.set(0, paperY - 0.35, 0);
+    lowerPlateMesh.receiveShadow = true;
+    mechGroup.add(lowerPlateMesh);
+
+    // Star-Wheel Carrier steel axle at z = 0, y = 2.0
+    const starWheelAxleGeo = new THREE.CylinderGeometry(0.85, 0.85, 42, 16);
+    starWheelAxleGeo.rotateZ(Math.PI / 2);
+    const starWheelAxleMesh = new THREE.Mesh(starWheelAxleGeo, steelCombMat);
+    starWheelAxleMesh.position.set(0, paperY - 1.8, 0);
+    mechGroup.add(starWheelAxleMesh);
+
+    // 15 Star-Wheels aligned with the 15 pitch guide lines
+    const starWheelPitch = 32.2 / (TOTAL_TINES - 1); // 2.3mm
+    const starWheelStart = -16.1;
+    const starWheelGeo = new THREE.CylinderGeometry(2.1, 2.1, 0.65, 12);
+    starWheelGeo.rotateZ(Math.PI / 2);
+
+    for (let i = 0; i < TOTAL_TINES; i++) {
+      const sx = starWheelStart + i * starWheelPitch;
+      const swMesh = new THREE.Mesh(starWheelGeo, brassMat);
+      swMesh.position.set(sx, paperY - 1.8, 0);
+      mechGroup.add(swMesh);
+    }
 
     // =========================================================================
     // UPGRADE 2: 上方使用薄金属片压纸 (Thin Metal Spring Plate ABOVE Paper Strip)
@@ -696,45 +973,87 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     mechGroup.add(axleMesh);
 
     // =========================================================================
-    // UPGRADE 4: 侧面曲柄通过齿轮传动带动纸带运动 (Gear Train Transmission)
+    // UPGRADE 4: 侧面曲柄通过二级减速齿轮传动带动纸带运动 (Compound Reduction Gear Train)
     // =========================================================================
     // Right side mechanical gear train connecting Crank Shaft -> Roller Axle!
+    // Realistic 3.08 : 1 Reduction Ratio: Crank turns ~3 times per roller turn!
     const gearX = 35; // Positioned between paper right edge (23) and right wall (63)
 
-    // Gear 1: Crank Pinion Gear on the crank drive shaft (radius 4.5, 12 teeth)
-    const gear1Group = createGearMesh(4.5, 3.2, 12, brassMat);
+    // Stage 1 Driving Gear: Small Pinion on Crank Shaft at (x = 35, y = 4.0, z = 0)
+    // Z1 = 10 teeth, radius 3.2mm, thickness 2.6mm
+    const gear1Group = createGearMesh(3.2, 2.6, 10, brassMat);
     gear1Group.position.set(gearX, paperY, 0);
     mechGroup.add(gear1Group);
     gear1Ref.current = gear1Group;
 
-    // Gear 2: Intermediate Transmission Gear (radius 5.5, 16 teeth)
-    // Meshes between Gear 1 and Gear 3
-    const gear2Group = createGearMesh(5.5, 3.0, 16, brassMat);
-    gear2Group.position.set(gearX, 6.4, -7.0);
-    mechGroup.add(gear2Group);
-    gear2Ref.current = gear2Group;
+    // Stage 1 Driven + Stage 2 Driving: Compound Intermediate Gear Unit at (y = 11.2, z = -7.0)
+    // Meshes with Gear 1 (Z1 = 10 -> Z2A = 22, ratio 2.2:1)
+    const gear2CompoundGroup = new THREE.Group();
+    gear2CompoundGroup.position.set(gearX, 11.2, -7.0);
+    mechGroup.add(gear2CompoundGroup);
+    gear2Ref.current = gear2CompoundGroup;
 
-    // Gear 3: Feed Roller Spur Gear (radius 5.2, 14 teeth)
-    // Mounted directly on the feed roller axle at z = -14, y = rollerY
-    const gear3Group = createGearMesh(5.2, 3.2, 14, brassMat);
-    gear3Group.position.set(gearX, rollerY, rollerZ);
+    // Intermediate steel axle pin
+    const interAxleGeo = new THREE.CylinderGeometry(1.2, 1.2, 16, 16);
+    interAxleGeo.rotateZ(Math.PI / 2);
+    const interAxleMesh = new THREE.Mesh(interAxleGeo, steelCombMat);
+    interAxleMesh.position.set(2.0, 0, 0);
+    gear2CompoundGroup.add(interAxleMesh);
+
+    // Gear 2A: Large Intermediate Reduction Gear (Z2A = 22 teeth, radius 7.0mm with elegant spokes)
+    const gear2AGroup = createGearMesh(7.0, 2.2, 22, brassMat, true);
+    gear2AGroup.position.set(0, 0, 0);
+    gear2CompoundGroup.add(gear2AGroup);
+
+    // Gear 2B: Coaxial Intermediate Stepping Pinion (Z2B = 10 teeth, radius 3.2mm)
+    // Shifted along X by +3.2mm to mesh with Gear 3
+    const gear2BGroup = createGearMesh(3.2, 2.4, 10, brassMat);
+    gear2BGroup.position.set(3.2, 0, 0);
+    gear2CompoundGroup.add(gear2BGroup);
+
+    // Stage 2 Driven Gear: Roller Spur Gear on Feed Roller Axle (z = -14, y = rollerY)
+    // Meshes with Gear 2B (Z2B = 10 -> Z3 = 14, ratio 1.4:1)
+    // Total Gear Ratio = 2.2 * 1.4 = 3.08 : 1
+    const gear3Group = createGearMesh(4.4, 2.6, 14, brassMat);
+    gear3Group.position.set(gearX + 3.2, rollerY, rollerZ);
     mechGroup.add(gear3Group);
     gear3Ref.current = gear3Group;
 
-    // Gear train mounting bracket
-    const gearPlate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 14, 24), brassMat);
-    gearPlate.position.set(gearX + 3.0, 6.5, -7.0);
+    // Outer Gearbox Support Bracket with bearing bosses
+    const gearPlate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 18, 26), brassMat);
+    gearPlate.position.set(gearX + 5.5, 7.8, -7.0);
     mechGroup.add(gearPlate);
+
+    const bossGeo = new THREE.CylinderGeometry(2.0, 2.0, 1.5, 12);
+    bossGeo.rotateZ(Math.PI / 2);
+    const bossCrank = new THREE.Mesh(bossGeo, brassMat);
+    bossCrank.position.set(gearX + 6.2, paperY, 0);
+    mechGroup.add(bossCrank);
+
+    const bossInter = new THREE.Mesh(bossGeo, brassMat);
+    bossInter.position.set(gearX + 6.2, 11.2, -7.0);
+    mechGroup.add(bossInter);
+
+    const bossRoller = new THREE.Mesh(bossGeo, brassMat);
+    bossRoller.position.set(gearX + 6.2, rollerY, rollerZ);
+    mechGroup.add(bossRoller);
 
     // 8. Continuous Paper Tape Ribbon:
     const paperCanvas = document.createElement('canvas');
-    paperCanvas.width = 1024;
-    paperCanvas.height = 256;
+    paperCanvas.width = 2048;
+    paperCanvas.height = 326;
     paperCanvasRef.current = paperCanvas;
 
     const paperTexture = new THREE.CanvasTexture(paperCanvas);
     paperTexture.wrapS = THREE.ClampToEdgeWrapping;
     paperTexture.wrapT = THREE.ClampToEdgeWrapping;
+    paperTexture.colorSpace = THREE.SRGBColorSpace;
+    paperTexture.generateMipmaps = true;
+    paperTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    paperTexture.magFilter = THREE.LinearFilter;
+    if (rendererRef.current) {
+      paperTexture.anisotropy = rendererRef.current.capabilities.getMaxAnisotropy();
+    }
     paperTextureRef.current = paperTexture;
 
     const paperMaterial = new THREE.MeshStandardMaterial({
@@ -742,6 +1061,10 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       roughness: 0.72,
       metalness: 0.02,
       side: THREE.DoubleSide,
+      transparent: true,
+      alphaTest: 0.5,
+      depthWrite: true,
+      shadowSide: THREE.DoubleSide,
     });
 
     // Build Continuous Seamless Curved Paper Ribbon passing through front & back slots
@@ -821,12 +1144,14 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     shaftGeo.rotateZ(Math.PI / 2);
     const shaftMesh = new THREE.Mesh(shaftGeo, brassMat);
     shaftMesh.position.set(-10, 0, 0); // Passes from gear1 to outer crank
+    shaftMesh.userData = { isCrank: true };
     crankGroup.add(shaftMesh);
 
     // Lever arm
     const leverGeo = new THREE.BoxGeometry(2.2, 19, 3.6);
     const leverMesh = new THREE.Mesh(leverGeo, brassMat);
     leverMesh.position.set(9, 7.5, 0);
+    leverMesh.userData = { isCrank: true };
     crankGroup.add(leverMesh);
 
     // Turned walnut knob
@@ -839,7 +1164,16 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     });
     const knobMesh = new THREE.Mesh(knobGeo, knobMat);
     knobMesh.position.set(15, 15, 0);
+    knobMesh.userData = { isCrank: true };
     crankGroup.add(knobMesh);
+
+    // Generous invisible hit volume for smooth cursor hover and mouse wheel interaction
+    const hitBoxGeo = new THREE.BoxGeometry(22, 28, 22);
+    const hitBoxMat = new THREE.MeshBasicMaterial({ visible: false });
+    const crankHitMesh = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+    crankHitMesh.position.set(12, 10, 0);
+    crankHitMesh.userData = { isCrank: true };
+    crankGroup.add(crankHitMesh);
 
     // Initial paper texture render
     updatePaperTexture();
@@ -870,9 +1204,14 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         }
       }
 
-      // Synchronous Gear Train Transmission:
-      // Crank drives Gear 1 -> drives Gear 2 -> drives Gear 3 & Thick Feed Roller
-      const crankAngle = currentStep * 0.45;
+      // Synchronous Two-Stage Compound Reduction Gear Transmission (Ratio 3.08 : 1)
+      // Crank Pinion 1 (Z1=10) -> Compound Gear 2 (Z2A=22, Z2B=10) -> Feed Roller Gear 3 (Z3=14)
+      // Paper pitch: 5.0mm/step. Roller radius: 4.8mm.
+      // Roller angular speed: 5.0 / 4.8 = 1.0417 rad/step (zero paper slip)
+      // Crank angular speed with 3.08:1 reduction: 1.0417 * 3.08 = 3.208 rad/step
+      const crankAngle = currentStepRef.current * 3.208;
+      const gear2Angle = -crankAngle * (10 / 22);
+      const rollerAngle = -gear2Angle * (10 / 14); // = crankAngle / 3.08 = 1.0417 * currentStep
 
       if (crankGroupRef.current) {
         crankGroupRef.current.rotation.x = crankAngle;
@@ -881,16 +1220,37 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         gear1Ref.current.rotation.x = crankAngle;
       }
       if (gear2Ref.current) {
-        // Counter-rotating gear 2
-        gear2Ref.current.rotation.x = -crankAngle * (4.5 / 5.5);
+        gear2Ref.current.rotation.x = gear2Angle;
       }
       if (gear3Ref.current) {
-        // Driven feed roller gear
-        const rollerAngle = crankAngle * (4.5 / 5.2);
         gear3Ref.current.rotation.x = rollerAngle;
-        if (rollerMeshRef.current) {
-          rollerMeshRef.current.rotation.x = rollerAngle;
-        }
+      }
+      if (rollerMeshRef.current) {
+        rollerMeshRef.current.rotation.x = rollerAngle;
+      }
+
+      // Smooth Camera Glide Interpolation (Silky smooth cinematic response)
+      const camLerp = 0.085;
+      currentCameraPhi.current += (targetCameraPhi.current - currentCameraPhi.current) * camLerp;
+      currentCameraTheta.current += (targetCameraTheta.current - currentCameraTheta.current) * camLerp;
+      currentCameraDistance.current += (targetCameraDistance.current - currentCameraDistance.current) * camLerp;
+      currentCameraTarget.current.lerp(targetCameraTarget.current, camLerp);
+
+      const phi = currentCameraPhi.current;
+      const theta = currentCameraTheta.current;
+      const r = currentCameraDistance.current;
+      const tgt = currentCameraTarget.current;
+
+      camera.position.x = tgt.x + r * Math.sin(phi) * Math.sin(theta);
+      camera.position.y = tgt.y + r * Math.cos(phi);
+      camera.position.z = tgt.z + r * Math.sin(phi) * Math.cos(theta);
+      camera.lookAt(tgt);
+
+      // Smooth Lid Opening Angle Interpolation
+      const lidLerp = 0.12;
+      currentLidAngleRef.current += (targetLidAngleRef.current - currentLidAngleRef.current) * lidLerp;
+      if (lidGroupRef.current) {
+        lidGroupRef.current.rotation.x = -currentLidAngleRef.current;
       }
 
       renderer.render(scene, camera);
@@ -917,6 +1277,8 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       walnutTex.dispose();
       paperTexture.dispose();
       continuousPaperGeo.dispose();
+      if (glassMaterialRef.current) glassMaterialRef.current.dispose();
+      if (reflectorRef.current) reflectorRef.current.dispose();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -926,7 +1288,9 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     updatePaperTexture();
   }, [currentStep, song, updatePaperTexture]);
 
-  // Mouse / Touch Event Handlers for 3D Orbit
+
+
+  // Mouse / Touch Event Handlers for 3D Orbit Navigation
   const handleMouseDown = (e: React.MouseEvent) => {
     isOrbiting.current = true;
     lastMousePos.current = { x: e.clientX, y: e.clientY };
@@ -938,9 +1302,8 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const dy = e.clientY - lastMousePos.current.y;
     lastMousePos.current = { x: e.clientX, y: e.clientY };
 
-    cameraTheta.current += dx * 0.008;
-    cameraPhi.current = Math.max(0.1, Math.min(Math.PI / 2 - 0.05, cameraPhi.current - dy * 0.008));
-    updateCameraPosition();
+    targetCameraTheta.current += dx * 0.008;
+    targetCameraPhi.current = Math.max(0.16, Math.min(Math.PI / 2 - 0.04, targetCameraPhi.current - dy * 0.008));
   };
 
   const handleMouseUp = () => {
@@ -949,8 +1312,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    cameraDistance.current = Math.max(80, Math.min(400, cameraDistance.current + e.deltaY * 0.25));
-    updateCameraPosition();
+    targetCameraDistance.current = Math.max(70, Math.min(380, targetCameraDistance.current + e.deltaY * 0.25));
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -966,9 +1328,8 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const dy = e.touches[0].clientY - lastMousePos.current.y;
     lastMousePos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
 
-    cameraTheta.current += dx * 0.008;
-    cameraPhi.current = Math.max(0.1, Math.min(Math.PI / 2 - 0.05, cameraPhi.current - dy * 0.008));
-    updateCameraPosition();
+    targetCameraTheta.current += dx * 0.008;
+    targetCameraPhi.current = Math.max(0.16, Math.min(Math.PI / 2 - 0.04, targetCameraPhi.current - dy * 0.008));
   };
 
   const handleTouchEnd = () => {
@@ -991,7 +1352,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         onTouchEnd={handleTouchEnd}
       />
 
-      {/* Floating Camera Angle Bar */}
+      {/* 1. Floating Camera Angle Bar (Top-Left) */}
       <div 
         className="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-1.5 p-1 bg-stone-900/90 backdrop-blur-md border border-stone-800 rounded-lg shadow-lg pointer-events-auto"
         onMouseDown={(e) => e.stopPropagation()}
@@ -1078,53 +1439,240 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         </button>
       </div>
 
-      {/* Floating Mechanical Status & Paper Feed Indicator */}
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-3 px-3 py-1.5 bg-stone-900/80 backdrop-blur-md border border-stone-800 rounded-lg text-xs text-stone-300">
-        <span className="text-amber-400 font-medium font-serif">精密机械结构</span>
-        <span className="text-stone-600">|</span>
-        <span className="text-stone-400">下置音梳 · 上置薄片压纸</span>
-        <span className="text-stone-600">|</span>
-        <span className="text-amber-300">曲柄齿轮啮合驱动</span>
-      </div>
+      {/* 2. Floating Lid Angle & Glass Material Control Panel (Top-Right) */}
+      <div 
+        className="absolute top-4 right-4 z-20 pointer-events-auto"
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+      >
+        {isControlsExpanded ? (
+          <div className="w-80 bg-stone-900/95 backdrop-blur-md border border-stone-700/80 rounded-2xl p-4 shadow-2xl space-y-3.5 text-xs text-stone-200 select-none">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-stone-800 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-md bg-amber-950 border border-amber-700/50 flex items-center justify-center text-amber-400">
+                  <Sliders className="w-3.5 h-3.5" />
+                </div>
+                <span className="font-semibold text-stone-100 font-serif">盒盖参数</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsControlsExpanded(false)}
+                className="p-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-lg transition-colors cursor-pointer"
+                title="收起盒盖参数面板"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+            </div>
 
-      {/* Interactive Virtual Hand-Crank Knob */}
-      <div className="absolute bottom-4 right-4 z-10 flex items-center gap-3 p-2 bg-stone-900/90 backdrop-blur-md border border-stone-800 rounded-xl shadow-xl">
-        <div className="flex flex-col text-right">
-          <span className="text-xs font-medium text-amber-200">手摇曲柄</span>
-          <span className="text-[11px] text-stone-400">驱动齿轮带动滚轮</span>
-        </div>
+            {/* 1. Lid Open Angle */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-stone-300 font-medium">盒盖打开角度</span>
+                <span className="px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 font-mono text-[11px] font-bold">
+                  {lidAngle}°
+                </span>
+              </div>
 
-        <div
-          className="relative w-12 h-12 rounded-full border-2 border-amber-600/40 bg-stone-800/80 flex items-center justify-center cursor-grab active:cursor-grabbing hover:border-amber-500 transition-colors shadow-inner"
-          onMouseDown={(e) => {
-            isDraggingCrank.current = true;
-            lastMousePos.current = { x: e.clientX, y: e.clientY };
-          }}
-          onMouseMove={(e) => {
-            if (!isDraggingCrank.current || !onStepChange) return;
-            const dy = lastMousePos.current.y - e.clientY;
-            const dx = e.clientX - lastMousePos.current.x;
-            lastMousePos.current = { x: e.clientX, y: e.clientY };
+              <input
+                type="range"
+                min="0"
+                max="120"
+                step="1"
+                value={lidAngle}
+                onChange={(e) => setLidAngle(Number(e.target.value))}
+                className="w-full accent-amber-500 bg-stone-800 h-1.5 rounded-lg cursor-pointer"
+              />
 
-            const deltaSteps = (dx + dy) * 0.15;
-            if (Math.abs(deltaSteps) > 0.01) {
-              const newStep = Math.max(0, Math.min(song.totalSteps, currentStep + deltaSteps));
-              onStepChange(newStep);
-              musicBoxSynth.playGearTick();
-            }
-          }}
-          onMouseUp={() => { isDraggingCrank.current = false; }}
-          onMouseLeave={() => { isDraggingCrank.current = false; }}
-          title="按住旋转曲柄，驱动齿轮组带动压纸滚轮"
-        >
-          <div
-            className="w-8 h-8 rounded-full border border-amber-500/60 bg-gradient-to-tr from-amber-800 to-amber-600 flex items-center justify-center text-amber-100 shadow-sm"
-            style={{ transform: `rotate(${currentStep * 40}deg)` }}
-          >
-            <RotateCcw className="w-4 h-4 text-amber-200" />
+              {/* Quick Angle Presets */}
+              <div className="grid grid-cols-4 gap-1.5 pt-0.5">
+                {[
+                  { label: '0° 合盖', val: 0 },
+                  { label: '45° 半开', val: 45 },
+                  { label: '75° 倾斜', val: 75 },
+                  { label: '100° 半反', val: 100 },
+                ].map((item) => (
+                  <button
+                    key={item.val}
+                    type="button"
+                    onClick={() => setLidAngle(item.val)}
+                    className={`py-1 px-1.5 text-center text-[10px] rounded-md border transition-all cursor-pointer ${
+                      lidAngle === item.val
+                        ? 'bg-amber-700/70 border-amber-500 text-amber-100 font-medium shadow-sm'
+                        : 'bg-stone-800/80 border-stone-700/60 text-stone-400 hover:text-stone-200 hover:bg-stone-700/60'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 2. Glass / Mirror Mode Presets */}
+            <div className="space-y-2 pt-1 border-t border-stone-800/80">
+              <div className="flex items-center justify-between">
+                <span className="text-stone-300 font-medium">材质模式预设</span>
+                <span className="text-[10px] text-stone-500">透明 ⇄ 镜面</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => selectGlassPreset('mirror')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-all cursor-pointer ${
+                    glassPreset === 'mirror'
+                      ? 'bg-amber-900/60 border-amber-500 text-amber-100 shadow-sm'
+                      : 'bg-stone-800/80 border-stone-700/60 text-stone-400 hover:text-stone-200 hover:bg-stone-700/60'
+                  }`}
+                >
+                  <span className="text-sm">🪞</span>
+                  <div>
+                    <div className="font-medium text-[11px] leading-tight">梳妆水银镜</div>
+                    <div className="text-[9px] text-stone-500">100%反光·不透光</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectGlassPreset('glass')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-all cursor-pointer ${
+                    glassPreset === 'glass'
+                      ? 'bg-amber-900/60 border-amber-500 text-amber-100 shadow-sm'
+                      : 'bg-stone-800/80 border-stone-700/60 text-stone-400 hover:text-stone-200 hover:bg-stone-700/60'
+                  }`}
+                >
+                  <span className="text-sm">🪟</span>
+                  <div>
+                    <div className="font-medium text-[11px] leading-tight">透明观赏窗</div>
+                    <div className="text-[9px] text-stone-500">92%透光·见内部</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectGlassPreset('half')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-all cursor-pointer ${
+                    glassPreset === 'half'
+                      ? 'bg-amber-900/60 border-amber-500 text-amber-100 shadow-sm'
+                      : 'bg-stone-800/80 border-stone-700/60 text-stone-400 hover:text-stone-200 hover:bg-stone-700/60'
+                  }`}
+                >
+                  <span className="text-sm">🌓</span>
+                  <div>
+                    <div className="font-medium text-[11px] leading-tight">半透半反镜</div>
+                    <div className="text-[9px] text-stone-500">50%透光·50%反射</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectGlassPreset('frosted')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-all cursor-pointer ${
+                    glassPreset === 'frosted'
+                      ? 'bg-amber-900/60 border-amber-500 text-amber-100 shadow-sm'
+                      : 'bg-stone-800/80 border-stone-700/60 text-stone-400 hover:text-stone-200 hover:bg-stone-700/60'
+                  }`}
+                >
+                  <span className="text-sm">🌫️</span>
+                  <div>
+                    <div className="font-medium text-[11px] leading-tight">磨砂漫射玻</div>
+                    <div className="text-[9px] text-stone-500">70%透光·哑光磨砂</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 3. Detailed Parameter Tuning */}
+            <div className="space-y-2.5 pt-1 border-t border-stone-800/80 text-[11px]">
+              {/* Transmittance Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-stone-400">
+                  <span>透光率 (透视内部)</span>
+                  <span className="font-mono text-amber-300 font-semibold">{transmittance}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={transmittance}
+                  onChange={(e) => {
+                    setTransmittance(Number(e.target.value));
+                    setGlassPreset('custom');
+                  }}
+                  className="w-full accent-amber-500 bg-stone-800 h-1.5 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-stone-500">
+                  <span>0% (不透光/水银镜)</span>
+                  <span>100% (完全透明玻璃)</span>
+                </div>
+              </div>
+
+              {/* Reflectivity Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-stone-400">
+                  <span>反射率 (镜面反光)</span>
+                  <span className="font-mono text-amber-300 font-semibold">{reflectivity}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={reflectivity}
+                  onChange={(e) => {
+                    setReflectivity(Number(e.target.value));
+                    setGlassPreset('custom');
+                  }}
+                  className="w-full accent-amber-500 bg-stone-800 h-1.5 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-stone-500">
+                  <span>0% (哑光无反光)</span>
+                  <span>100% (高亮银镜反射)</span>
+                </div>
+              </div>
+
+              {/* Roughness Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-stone-400">
+                  <span>表面粗糙度</span>
+                  <span className="font-mono text-amber-300 font-semibold">{roughness}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={roughness}
+                  onChange={(e) => {
+                    setRoughness(Number(e.target.value));
+                    setGlassPreset('custom');
+                  }}
+                  className="w-full accent-amber-500 bg-stone-800 h-1.5 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[9px] text-stone-500">
+                  <span>0% (高光镜面)</span>
+                  <span>100% (磨砂漫射)</span>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsControlsExpanded(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-stone-900/95 hover:bg-stone-800 text-stone-200 border border-stone-700/80 rounded-xl shadow-xl transition-all cursor-pointer text-xs"
+          >
+            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+            <span className="font-medium">盒盖参数</span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 font-mono text-[10px]">
+              {lidAngle}°
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
+          </button>
+        )}
       </div>
+
     </div>
   );
 };
