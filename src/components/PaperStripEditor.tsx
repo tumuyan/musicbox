@@ -17,9 +17,17 @@ import {
   Plus,
   Minus,
   ArrowRight,
+  ArrowLeft,
+  ArrowUp,
+  ArrowDown,
   Music,
   Download,
-  Scissors
+  Scissors,
+  BoxSelect,
+  Eraser,
+  CheckSquare,
+  X,
+  Copy
 } from 'lucide-react';
 import { generatePrintablePaperStripSVG } from '../utils/paperExport';
 
@@ -39,9 +47,10 @@ interface PaperMatrixProps {
   rowHeight: number;
   gridHeight: number;
   holeSet: Set<string>;
-  selectedTool: 'punch' | 'erase';
+  selectedHoleKeySet: Set<string>;
+  selectedTool: 'punch' | 'erase' | 'select';
   isMouseDown: boolean;
-  onCellClick: (step: number, tineIndex: number) => void;
+  onCellClick: (step: number, tineIndex: number, e: React.MouseEvent) => void;
 }
 
 // Memoized Pitch Grid & Punched Holes: Isolates 3,840+ cells from 60fps playback re-renders!
@@ -52,6 +61,7 @@ const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
   rowHeight,
   gridHeight,
   holeSet,
+  selectedHoleKeySet,
   selectedTool,
   isMouseDown,
   onCellClick,
@@ -110,32 +120,51 @@ const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
             style={{ top: topPos, height: rowHeight }}
           >
             {Array.from({ length: totalSteps }).map((_, step) => {
-              const hasHole = holeSet.has(`${step}-${tineIndex}`);
+              const cellKey = `${step}-${tineIndex}`;
+              const hasHole = holeSet.has(cellKey);
+              const isSelected = selectedHoleKeySet.has(cellKey);
 
               return (
                 <div
-                  key={`cell-${step}-${tineIndex}`}
-                  onClick={() => onCellClick(step, tineIndex)}
-                  onMouseEnter={() => {
-                    if (isMouseDown) {
+                  key={`cell-${cellKey}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCellClick(step, tineIndex, e);
+                  }}
+                  onMouseEnter={(e) => {
+                    if (isMouseDown && selectedTool !== 'select') {
                       if (selectedTool === 'punch' && !hasHole) {
-                        onCellClick(step, tineIndex);
+                        onCellClick(step, tineIndex, e);
                       } else if (selectedTool === 'erase' && hasHole) {
-                        onCellClick(step, tineIndex);
+                        onCellClick(step, tineIndex, e);
                       }
                     }
                   }}
-                  className="h-full flex items-center justify-center cursor-pointer group"
+                  className={`h-full flex items-center justify-center group ${
+                    selectedTool === 'select'
+                      ? hasHole ? 'cursor-pointer' : 'cursor-default'
+                      : 'cursor-pointer'
+                  }`}
                   style={{ width: zoom }}
-                  title={`Punch Step ${step}, Note ${MUSIC_BOX_SCALE[tineIndex].name}`}
+                  title={`${MUSIC_BOX_SCALE[tineIndex].name} (Step ${step})${isSelected ? ' [已选]' : ''}`}
                 >
-                  {/* Circular Punched Hole: "在midi note对应位置打圆孔，不管多长的音符都是一个圆孔" */}
+                  {/* Circular Punched Hole: with golden glow when selected */}
                   {hasHole ? (
-                    <div className="relative w-[8.5px] h-[8.5px] rounded-full bg-[#1A140E] border border-[#4A3C2F] shadow-inner flex items-center justify-center transform group-hover:scale-110">
-                      <div className="w-[5px] h-[5px] rounded-full bg-black/90 shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)]" />
+                    <div className={`relative rounded-full flex items-center justify-center transform transition-all ${
+                      isSelected
+                        ? 'w-[10px] h-[10px] bg-amber-400 ring-2 ring-amber-400 ring-offset-1 ring-offset-[#FAF7F0] scale-125 shadow-lg shadow-amber-500/60 z-10'
+                        : 'w-[8.5px] h-[8.5px] bg-[#1A140E] border border-[#4A3C2F] shadow-inner group-hover:scale-110'
+                    }`}>
+                      <div className={`rounded-full ${
+                        isSelected ? 'w-[5px] h-[5px] bg-amber-950' : 'w-[5px] h-[5px] bg-black/90 shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)]'
+                      }`} />
                     </div>
                   ) : (
-                    <div className="w-[7px] h-[7px] rounded-full border border-dashed border-amber-600/0 group-hover:border-amber-600/50 group-hover:bg-amber-500/10" />
+                    <div className={`w-[7px] h-[7px] rounded-full ${
+                      selectedTool === 'punch'
+                        ? 'border border-dashed border-amber-600/0 group-hover:border-amber-600/50 group-hover:bg-amber-500/10'
+                        : ''
+                    }`} />
                   )}
                 </div>
               );
@@ -156,9 +185,13 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
   isPlaying = false,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const paperRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(18); // Pixels per step (16th note)
-  const [selectedTool, setSelectedTool] = useState<'punch' | 'erase'>('punch');
+  const [selectedTool, setSelectedTool] = useState<'punch' | 'erase' | 'select'>('select');
   const [isMouseDown, setIsMouseDown] = useState(false);
+  const [selectedHoleIds, setSelectedHoleIds] = useState<Set<string>>(new Set());
+  const [marqueeBox, setMarqueeBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const [isMarqueeSelecting, setIsMarqueeSelecting] = useState(false);
 
   // Auto-scroll with playback playhead smoothly without jitter or back-and-forth shaking
   useEffect(() => {
@@ -186,21 +219,49 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
     }
   }, [currentStep, zoom, isMouseDown, isPlaying]);
 
-  // Handle cell click (punch or erase)
-  const handleCellClick = useCallback((step: number, tineIndex: number) => {
+  // Handle cell click (punch, erase, or select)
+  const handleCellClick = useCallback((step: number, tineIndex: number, e?: React.MouseEvent) => {
     musicBoxSynth.resume();
     const existingIndex = song.holes.findIndex(h => h.step === step && h.tineIndex === tineIndex);
+
+    if (selectedTool === 'select') {
+      if (existingIndex >= 0) {
+        const hole = song.holes[existingIndex];
+        if (e?.shiftKey || e?.ctrlKey || e?.metaKey) {
+          setSelectedHoleIds(prev => {
+            const next = new Set(prev);
+            if (next.has(hole.id)) next.delete(hole.id);
+            else next.add(hole.id);
+            return next;
+          });
+        } else {
+          setSelectedHoleIds(new Set([hole.id]));
+        }
+        musicBoxSynth.playTine(tineIndex, 0.9);
+      } else {
+        if (!e?.shiftKey && !e?.ctrlKey && !e?.metaKey) {
+          setSelectedHoleIds(new Set());
+        }
+      }
+      return;
+    }
 
     let updatedHoles: PunchHole[];
 
     if (existingIndex >= 0) {
       // Hole exists: remove it
+      const removedId = song.holes[existingIndex].id;
       updatedHoles = song.holes.filter((_, i) => i !== existingIndex);
+      setSelectedHoleIds(prev => {
+        const next = new Set(prev);
+        next.delete(removedId);
+        return next;
+      });
       musicBoxSynth.playHolePunchSound();
     } else {
       // Punch new hole: "在midi note对应位置打圆孔，不管多长的音符都是一个圆孔"
       const newHole: PunchHole = {
-        id: `punch-${step}-${tineIndex}-${Date.now()}`,
+        id: `punch-${step}-${tineIndex}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         step,
         tineIndex,
         midi: MUSIC_BOX_SCALE[tineIndex].midi,
@@ -214,7 +275,237 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
       ...song,
       holes: updatedHoles,
     });
-  }, [song, onSongChange]);
+  }, [song, onSongChange, selectedTool]);
+
+  // Batch Delete Selected Notes (整体删除所选音符)
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedHoleIds.size === 0) return;
+    const updatedHoles = song.holes.filter(h => !selectedHoleIds.has(h.id));
+    onSongChange({
+      ...song,
+      holes: updatedHoles,
+    });
+    setSelectedHoleIds(new Set());
+    musicBoxSynth.playHolePunchSound();
+  }, [song, onSongChange, selectedHoleIds]);
+
+  // Batch Move Selected Notes in Time (整体水平移动所选音符)
+  const handleMoveSelected = useCallback((deltaSteps: number) => {
+    if (selectedHoleIds.size === 0 || deltaSteps === 0) return;
+
+    const selectedHoles = song.holes.filter(h => selectedHoleIds.has(h.id));
+    const minStep = Math.min(...selectedHoles.map(h => h.step));
+    const maxStep = Math.max(...selectedHoles.map(h => h.step));
+
+    let actualDelta = deltaSteps;
+    if (minStep + actualDelta < 0) {
+      actualDelta = -minStep;
+    }
+    if (actualDelta === 0) return;
+
+    let newTotalSteps = song.totalSteps;
+    if (maxStep + actualDelta >= song.totalSteps) {
+      const stepsPerMeasure = song.timeSignature[0] * 4;
+      newTotalSteps = Math.ceil((maxStep + actualDelta + 8) / stepsPerMeasure) * stepsPerMeasure;
+    }
+
+    const movedMap = new Map<string, PunchHole>();
+    const newSelectedIds = new Set<string>();
+
+    selectedHoles.forEach(h => {
+      const targetStep = h.step + actualDelta;
+      const targetKey = `${targetStep}-${h.tineIndex}`;
+      const newId = `punch-${targetStep}-${h.tineIndex}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      movedMap.set(targetKey, {
+        ...h,
+        id: newId,
+        step: targetStep,
+      });
+      newSelectedIds.add(newId);
+    });
+
+    const keptUnselected = song.holes.filter(
+      h => !selectedHoleIds.has(h.id) && !movedMap.has(`${h.step}-${h.tineIndex}`)
+    );
+
+    onSongChange({
+      ...song,
+      totalSteps: newTotalSteps,
+      holes: [...keptUnselected, ...Array.from(movedMap.values())],
+    });
+    setSelectedHoleIds(newSelectedIds);
+    musicBoxSynth.playHolePunchSound();
+  }, [song, onSongChange, selectedHoleIds]);
+
+  // Batch Transpose Selected Notes by Tine Row (整体上下移调音齿)
+  const handleTransposeTines = useCallback((deltaTines: number) => {
+    if (selectedHoleIds.size === 0 || deltaTines === 0) return;
+
+    const selectedHoles = song.holes.filter(h => selectedHoleIds.has(h.id));
+    const minTine = Math.min(...selectedHoles.map(h => h.tineIndex));
+    const maxTine = Math.max(...selectedHoles.map(h => h.tineIndex));
+
+    let actualDelta = deltaTines;
+    if (minTine + actualDelta < 0) {
+      actualDelta = -minTine;
+    }
+    if (maxTine + actualDelta >= TOTAL_TINES) {
+      actualDelta = TOTAL_TINES - 1 - maxTine;
+    }
+    if (actualDelta === 0) return;
+
+    const movedMap = new Map<string, PunchHole>();
+    const newSelectedIds = new Set<string>();
+
+    selectedHoles.forEach(h => {
+      const targetTine = h.tineIndex + actualDelta;
+      const targetKey = `${h.step}-${targetTine}`;
+      const newId = `punch-${h.step}-${targetTine}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      movedMap.set(targetKey, {
+        ...h,
+        id: newId,
+        tineIndex: targetTine,
+        midi: MUSIC_BOX_SCALE[targetTine].midi,
+      });
+      newSelectedIds.add(newId);
+    });
+
+    const keptUnselected = song.holes.filter(
+      h => !selectedHoleIds.has(h.id) && !movedMap.has(`${h.step}-${h.tineIndex}`)
+    );
+
+    onSongChange({
+      ...song,
+      holes: [...keptUnselected, ...Array.from(movedMap.values())],
+    });
+    setSelectedHoleIds(newSelectedIds);
+    musicBoxSynth.playHolePunchSound();
+
+    if (actualDelta > 0 && maxTine + actualDelta < TOTAL_TINES) {
+      musicBoxSynth.playTine(maxTine + actualDelta, 0.9);
+    } else if (minTine + actualDelta >= 0) {
+      musicBoxSynth.playTine(minTine + actualDelta, 0.9);
+    }
+  }, [song, onSongChange, selectedHoleIds]);
+
+  // Batch Transpose Selected Notes by Semitone (整体按半音移调)
+  const handleTransposeSemitones = useCallback((semitones: number) => {
+    if (selectedHoleIds.size === 0 || semitones === 0) return;
+
+    const selectedHoles = song.holes.filter(h => selectedHoleIds.has(h.id));
+    const movedMap = new Map<string, PunchHole>();
+    const newSelectedIds = new Set<string>();
+
+    selectedHoles.forEach(h => {
+      const targetMidi = h.midi + semitones;
+      let closestIdx = 0;
+      let minDiff = Infinity;
+      for (let i = 0; i < MUSIC_BOX_SCALE.length; i++) {
+        const diff = Math.abs(MUSIC_BOX_SCALE[i].midi - targetMidi);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = i;
+        }
+      }
+      const targetKey = `${h.step}-${closestIdx}`;
+      const newId = `punch-${h.step}-${closestIdx}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      movedMap.set(targetKey, {
+        ...h,
+        id: newId,
+        tineIndex: closestIdx,
+        midi: MUSIC_BOX_SCALE[closestIdx].midi,
+      });
+      newSelectedIds.add(newId);
+    });
+
+    const keptUnselected = song.holes.filter(
+      h => !selectedHoleIds.has(h.id) && !movedMap.has(`${h.step}-${h.tineIndex}`)
+    );
+
+    onSongChange({
+      ...song,
+      holes: [...keptUnselected, ...Array.from(movedMap.values())],
+    });
+    setSelectedHoleIds(newSelectedIds);
+    musicBoxSynth.playHolePunchSound();
+  }, [song, onSongChange, selectedHoleIds]);
+
+  // Duplicate Selected Notes (复制选中的音符)
+  const handleDuplicateSelected = useCallback(() => {
+    if (selectedHoleIds.size === 0) return;
+    const selectedHoles = song.holes.filter(h => selectedHoleIds.has(h.id));
+    const offset = 4; // Shift copy forward by 1 beat (4 steps)
+    const duplicatedHoles: PunchHole[] = [];
+    const newSelectedIds = new Set<string>();
+
+    selectedHoles.forEach(h => {
+      const targetStep = h.step + offset;
+      const newId = `punch-${targetStep}-${h.tineIndex}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      duplicatedHoles.push({
+        ...h,
+        id: newId,
+        step: targetStep,
+      });
+      newSelectedIds.add(newId);
+    });
+
+    onSongChange({
+      ...song,
+      holes: [...song.holes, ...duplicatedHoles],
+    });
+    setSelectedHoleIds(newSelectedIds);
+    musicBoxSynth.playHolePunchSound();
+  }, [song, onSongChange, selectedHoleIds]);
+
+  // Select All Notes (全选)
+  const handleSelectAll = useCallback(() => {
+    setSelectedHoleIds(new Set(song.holes.map(h => h.id)));
+  }, [song.holes]);
+
+  // Clear Selection (取消选择)
+  const handleClearSelection = useCallback(() => {
+    setSelectedHoleIds(new Set());
+  }, []);
+
+  // Keyboard Shortcuts (Delete, Esc, Ctrl+A, Arrows for Move & Transpose)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedHoleIds.size > 0) {
+          e.preventDefault();
+          handleDeleteSelected();
+        }
+      } else if (e.key === 'Escape') {
+        if (selectedHoleIds.size > 0) {
+          e.preventDefault();
+          handleClearSelection();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        handleSelectAll();
+        setSelectedTool('select');
+      } else if (selectedHoleIds.size > 0) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          handleMoveSelected(e.shiftKey ? -4 : -1);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          handleMoveSelected(e.shiftKey ? 4 : 1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          handleTransposeTines(1);
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          handleTransposeTines(-1);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedHoleIds, handleDeleteSelected, handleClearSelection, handleSelectAll, handleMoveSelected, handleTransposeTines]);
 
   // Clear all holes
   const handleClearTape = () => {
@@ -223,6 +514,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
         ...song,
         holes: [],
       });
+      setSelectedHoleIds(new Set());
     }
   };
 
@@ -238,11 +530,15 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
 
   // Transpose song +/- 1 semitone
   const handleTranspose = (semitones: number) => {
+    if (selectedHoleIds.size > 0) {
+      handleTransposeSemitones(semitones);
+      return;
+    }
+
     const updatedHoles: PunchHole[] = [];
 
     song.holes.forEach(hole => {
       const newMidi = hole.midi + semitones;
-      // Find closest tine
       let closestIdx = 0;
       let minDiff = Infinity;
       for (let i = 0; i < MUSIC_BOX_SCALE.length; i++) {
@@ -253,7 +549,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
         }
       }
 
-      if (minDiff <= 1) { // Within reasonable range
+      if (minDiff <= 1) {
         updatedHoles.push({
           ...hole,
           tineIndex: closestIdx,
@@ -296,6 +592,79 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
   // Quick lookup set for holes: `${step}-${tineIndex}` (memoized to avoid rebuilding on playback)
   const holeSet = useMemo(() => new Set(song.holes.map(h => `${h.step}-${h.tineIndex}`)), [song.holes]);
 
+  // Quick lookup set for selected holes
+  const selectedHoleKeySet = useMemo(() => {
+    if (selectedHoleIds.size === 0) return new Set<string>();
+    const set = new Set<string>();
+    song.holes.forEach(h => {
+      if (selectedHoleIds.has(h.id)) {
+        set.add(`${h.step}-${h.tineIndex}`);
+      }
+    });
+    return set;
+  }, [song.holes, selectedHoleIds]);
+
+  // Paper Mouse Handlers for Marquee Box Selection
+  const handlePaperMouseDown = (e: React.MouseEvent) => {
+    setIsMouseDown(true);
+    if (selectedTool !== 'select') return;
+
+    const rect = paperRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const step = Math.floor(x / zoom);
+    const rowIdx = Math.floor((y - topMarginHeight) / rowHeight);
+    const tineIndex = TOTAL_TINES - 1 - rowIdx;
+
+    const holeAtPos = song.holes.find(h => h.step === step && h.tineIndex === tineIndex);
+    if (holeAtPos) {
+      return;
+    }
+
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      setSelectedHoleIds(new Set());
+    }
+    setMarqueeBox({ startX: x, startY: y, currentX: x, currentY: y });
+    setIsMarqueeSelecting(true);
+  };
+
+  const handlePaperMouseMove = (e: React.MouseEvent) => {
+    if (!isMarqueeSelecting || !marqueeBox) return;
+
+    const rect = paperRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+
+    setMarqueeBox(prev => (prev ? { ...prev, currentX, currentY } : null));
+
+    const minX = Math.min(marqueeBox.startX, currentX);
+    const maxX = Math.max(marqueeBox.startX, currentX);
+    const minY = Math.min(marqueeBox.startY, currentY);
+    const maxY = Math.max(marqueeBox.startY, currentY);
+
+    const enclosedIds = new Set<string>();
+    song.holes.forEach(hole => {
+      const hx = (hole.step + 0.5) * zoom;
+      const hy = topMarginHeight + (TOTAL_TINES - 1 - hole.tineIndex + 0.5) * rowHeight;
+      if (hx >= minX && hx <= maxX && hy >= minY && hy <= maxY) {
+        enclosedIds.add(hole.id);
+      }
+    });
+
+    setSelectedHoleIds(enclosedIds);
+  };
+
+  const handlePaperMouseUp = () => {
+    setIsMouseDown(false);
+    setIsMarqueeSelecting(false);
+    setMarqueeBox(null);
+  };
+
   return (
     <div className="flex flex-col h-full bg-[#1A1918] border-t border-stone-800 text-stone-200">
       {/* Ribbon Control Toolbar */}
@@ -304,27 +673,54 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
         <div className="flex items-center gap-2">
           <div className="flex items-center bg-stone-800 p-0.5 rounded-lg border border-stone-700/60">
             <button
-              onClick={() => setSelectedTool('punch')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors ${
-                selectedTool === 'punch'
-                  ? 'bg-amber-600 text-stone-900 shadow-sm'
+              onClick={() => setSelectedTool('select')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                selectedTool === 'select'
+                  ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
                   : 'text-stone-400 hover:text-stone-200'
               }`}
+              title="选择工具：框选或点击选择音符，可整体移动、移调、删除"
+            >
+              <BoxSelect className="w-3.5 h-3.5" />
+              <span>选择工具</span>
+            </button>
+            <button
+              onClick={() => setSelectedTool('punch')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                selectedTool === 'punch'
+                  ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
+                  : 'text-stone-400 hover:text-stone-200'
+              }`}
+              title="打孔笔：在格点上打孔"
             >
               <Scissors className="w-3.5 h-3.5" />
               <span>打孔笔</span>
             </button>
             <button
               onClick={() => setSelectedTool('erase')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
                 selectedTool === 'erase'
-                  ? 'bg-amber-600 text-stone-900 shadow-sm'
+                  ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
                   : 'text-stone-400 hover:text-stone-200'
               }`}
+              title="橡皮擦：擦除已有打孔"
             >
+              <Eraser className="w-3.5 h-3.5" />
               <span>橡皮擦</span>
             </button>
           </div>
+
+          <button
+            onClick={() => {
+              handleSelectAll();
+              setSelectedTool('select');
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-md border border-stone-700/50 transition-colors cursor-pointer"
+            title="全选纸带所有音符 (快捷键: Ctrl+A)"
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>全选</span>
+          </button>
 
           <span className="text-stone-600">|</span>
 
@@ -466,19 +862,27 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
         {/* Scrollable Paper Strip Canvas */}
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-x-auto overflow-y-hidden bg-[#2D2A26] relative cursor-crosshair"
-          onMouseDown={() => setIsMouseDown(true)}
-          onMouseUp={() => setIsMouseDown(false)}
-          onMouseLeave={() => setIsMouseDown(false)}
+          className={`flex-1 overflow-x-auto overflow-y-hidden bg-[#2D2A26] relative ${
+            selectedTool === 'select' ? 'cursor-default' : 'cursor-crosshair'
+          }`}
+          onMouseLeave={() => {
+            setIsMouseDown(false);
+            setIsMarqueeSelecting(false);
+            setMarqueeBox(null);
+          }}
         >
           {/* Authentic Cream Paper Strip */}
           <div
-            className="relative bg-[#FAF7F0] shadow-2xl"
+            ref={paperRef}
+            className="relative bg-[#FAF7F0] shadow-2xl select-none"
             style={{
               width: totalPaperWidth,
               height: totalPaperHeight,
               boxShadow: '0 10px 30px rgba(0,0,0,0.5), 0 0 1px rgba(0,0,0,0.8)',
             }}
+            onMouseDown={handlePaperMouseDown}
+            onMouseMove={handlePaperMouseMove}
+            onMouseUp={handlePaperMouseUp}
           >
             {/* 1. TOP BLANK MARGIN (留白边) */}
             <div
@@ -515,10 +919,24 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               rowHeight={rowHeight}
               gridHeight={gridHeight}
               holeSet={holeSet}
+              selectedHoleKeySet={selectedHoleKeySet}
               selectedTool={selectedTool}
               isMouseDown={isMouseDown}
               onCellClick={handleCellClick}
             />
+
+            {/* Marquee Selection Bounding Box */}
+            {marqueeBox && isMarqueeSelecting && (
+              <div
+                className="absolute pointer-events-none z-40 border-2 border-amber-600 border-dashed bg-amber-500/20 rounded shadow-sm"
+                style={{
+                  left: Math.min(marqueeBox.startX, marqueeBox.currentX),
+                  top: Math.min(marqueeBox.startY, marqueeBox.currentY),
+                  width: Math.abs(marqueeBox.currentX - marqueeBox.startX),
+                  height: Math.abs(marqueeBox.currentY - marqueeBox.startY),
+                }}
+              />
+            )}
 
             {/* 3. BOTTOM BLANK MARGIN (留白边) */}
             <div
@@ -551,6 +969,120 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Floating Batch Actions Bar for Selected Notes (整体删除 / 移调 / 移动) */}
+        {selectedHoleIds.size > 0 && (
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 px-3 bg-stone-900/95 backdrop-blur-md border border-amber-600/70 rounded-xl shadow-2xl text-xs text-stone-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {/* Badge */}
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-950/80 border border-amber-700/60 rounded-lg text-amber-300 font-medium">
+              <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+              <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 个音符</span>
+            </div>
+
+            <div className="w-[1px] h-5 bg-stone-800 mx-0.5" />
+
+            {/* Batch Move in Time */}
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-stone-400 font-medium ml-1">移动:</span>
+              <button
+                onClick={() => handleMoveSelected(-1)}
+                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                title="向左移动 1 步 (快捷键: ←)"
+              >
+                <ArrowLeft className="w-3 h-3" />
+                <span>1步</span>
+              </button>
+              <button
+                onClick={() => handleMoveSelected(1)}
+                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                title="向右移动 1 步 (快捷键: →)"
+              >
+                <span>1步</span>
+                <ArrowRight className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => handleMoveSelected(-4)}
+                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
+                title="向左移动 1 拍 (4步) (快捷键: Shift+←)"
+              >
+                -1拍
+              </button>
+              <button
+                onClick={() => handleMoveSelected(4)}
+                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
+                title="向右移动 1 拍 (4步) (快捷键: Shift+→)"
+              >
+                +1拍
+              </button>
+            </div>
+
+            <div className="w-[1px] h-5 bg-stone-800 mx-0.5" />
+
+            {/* Batch Transpose Pitch */}
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-stone-400 font-medium ml-1">移调:</span>
+              <button
+                onClick={() => handleTransposeTines(1)}
+                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                title="音高上移 1 音齿 (快捷键: ↑)"
+              >
+                <ArrowUp className="w-3 h-3 text-amber-400" />
+                <span>升齿</span>
+              </button>
+              <button
+                onClick={() => handleTransposeTines(-1)}
+                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                title="音高下移 1 音齿 (快捷键: ↓)"
+              >
+                <ArrowDown className="w-3 h-3 text-amber-400" />
+                <span>降齿</span>
+              </button>
+              <button
+                onClick={() => handleTransposeSemitones(1)}
+                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
+                title="升半音 (+1 Semitone)"
+              >
+                +1半音
+              </button>
+              <button
+                onClick={() => handleTransposeSemitones(-1)}
+                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
+                title="降半音 (-1 Semitone)"
+              >
+                -1半音
+              </button>
+            </div>
+
+            <div className="w-[1px] h-5 bg-stone-800 mx-0.5" />
+
+            {/* Duplicate, Delete, Cancel */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleDuplicateSelected}
+                className="flex items-center gap-1 px-2.5 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-300 hover:text-stone-100 transition-all cursor-pointer"
+                title="复制选中的音符 (向后偏移1拍)"
+              >
+                <Copy className="w-3 h-3 text-blue-400" />
+                <span>复制</span>
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                className="flex items-center gap-1 px-2.5 py-1 bg-red-950/70 hover:bg-red-900 border border-red-700/60 active:scale-95 rounded text-red-200 hover:text-red-100 transition-all cursor-pointer"
+                title="删除选中的音符 (快捷键: Delete / Backspace)"
+              >
+                <Trash2 className="w-3 h-3 text-red-400" />
+                <span>删除</span>
+              </button>
+              <button
+                onClick={handleClearSelection}
+                className="p-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded transition-colors ml-1 cursor-pointer"
+                title="取消选择 (快捷键: Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

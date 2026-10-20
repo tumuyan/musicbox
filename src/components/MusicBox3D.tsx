@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { SongData, MUSIC_BOX_SCALE, TOTAL_TINES } from '../types/musicBox';
 import { musicBoxSynth } from '../audio/MusicBoxSynth';
-import { Camera, RotateCcw, Eye, Disc, Cog, Sliders, ChevronDown, ChevronUp } from 'lucide-react';
+import { Camera, RotateCcw, Eye, Disc, Cog, Sliders, ChevronDown, ChevronUp, Move } from 'lucide-react';
 
 interface MusicBox3DProps {
   song: SongData;
@@ -71,10 +71,32 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
 
 
-  // Animation frame & orbit tracking
+  // 3D Navigation Mode: 'orbit' (rotate perspective) or 'pan' (move perspective)
+  const [navMode, setNavMode] = useState<'orbit' | 'pan'>('orbit');
+
+  // Animation frame & camera orbit/pan tracking
   const animFrameId = useRef<number | null>(null);
   const lastMousePos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isOrbiting = useRef<boolean>(false);
+  const isPanning = useRef<boolean>(false);
+  const touchStartDist = useRef<number>(0);
+  const touchStartMid = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Pan Camera helper: moves camera target in screen-space plane
+  const panCamera = useCallback((deltaX: number, deltaY: number) => {
+    if (!cameraRef.current) return;
+    const cameraRight = new THREE.Vector3();
+    const cameraUp = new THREE.Vector3();
+    cameraRef.current.matrix.extractBasis(cameraRight, cameraUp, new THREE.Vector3());
+    cameraRight.normalize();
+    cameraUp.normalize();
+
+    const factor = targetCameraDistance.current * 0.0016;
+    // Moving mouse right (deltaX > 0) shifts target left -> 3D scene moves right following the cursor
+    targetCameraTarget.current.addScaledVector(cameraRight, -deltaX * factor);
+    // Moving mouse down (deltaY > 0) shifts target up -> 3D scene moves down following the cursor
+    targetCameraTarget.current.addScaledVector(cameraUp, deltaY * factor);
+  }, []);
 
 
 
@@ -321,6 +343,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   }, []);
 
   // Helper to build 3D Brass Spur Gears with teeth, axle hub and optional open spokes
+  // Helper to build 3D Brass Spur Gears with authentic tapered & pointed teeth, bevels, and axle hub
   const createGearMesh = (
     radius: number,
     thickness: number,
@@ -330,48 +353,123 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   ): THREE.Group => {
     const gearGroup = new THREE.Group();
 
-    // Central axle collar
+    // 1. Central axle collar
     const collarGeo = new THREE.CylinderGeometry(radius * 0.28, radius * 0.28, thickness * 1.35, 16);
     collarGeo.rotateZ(Math.PI / 2);
     const collarMesh = new THREE.Mesh(collarGeo, brassMaterial);
     gearGroup.add(collarMesh);
 
-    if (hasSpokes) {
-      // Clockwork open spoked wheel: outer rim ring + cross spokes
-      const rimGeo = new THREE.CylinderGeometry(radius * 0.82, radius * 0.82, thickness, 32);
-      rimGeo.rotateZ(Math.PI / 2);
-      const rimMesh = new THREE.Mesh(rimGeo, brassMaterial);
-      gearGroup.add(rimMesh);
-
-      // 4 cut-out relief spokes
-      const spokeGeo = new THREE.BoxGeometry(thickness * 0.88, radius * 0.65, radius * 0.16);
-      for (let s = 0; s < 4; s++) {
-        const spokeAngle = (s / 4) * Math.PI;
-        const spokeMesh = new THREE.Mesh(spokeGeo, brassMaterial);
-        spokeMesh.rotation.x = spokeAngle;
-        gearGroup.add(spokeMesh);
-      }
-    } else {
-      // Solid disk hub
-      const hubGeo = new THREE.CylinderGeometry(radius * 0.82, radius * 0.82, thickness, 24);
-      hubGeo.rotateZ(Math.PI / 2);
-      const hubMesh = new THREE.Mesh(hubGeo, brassMaterial);
-      gearGroup.add(hubMesh);
-    }
-
-    // Radial gear teeth
-    const toothW = thickness * 0.95;
-    const toothH = radius * 0.28;
-    const toothD = ((Math.PI * 2 * radius) / numTeeth) * 0.52;
-    const toothGeo = new THREE.BoxGeometry(toothW, toothH, toothD);
+    // 2. Generate 2D Gear Profile Shape with pointed, tapered teeth for smooth interlocking mesh
+    const shape = new THREE.Shape();
+    const deltaAngle = (Math.PI * 2) / numTeeth;
+    const module = (2 * radius) / numTeeth;
+    const ha = 0.90 * module; // Addendum (tooth tip extension)
+    const hd = 1.10 * module; // Dedendum (tooth root depth)
+    const rRoot = Math.max(radius * 0.52, radius - hd);
+    const rTip = radius + ha;
+    const rPitch = radius;
 
     for (let i = 0; i < numTeeth; i++) {
-      const angle = (i / numTeeth) * Math.PI * 2;
-      const toothMesh = new THREE.Mesh(toothGeo, brassMaterial);
-      toothMesh.position.set(0, Math.sin(angle) * (radius * 0.9), Math.cos(angle) * (radius * 0.9));
-      toothMesh.rotation.x = -angle;
-      gearGroup.add(toothMesh);
+      const theta = i * deltaAngle;
+
+      // Point 1: Root trough start
+      const t1 = theta - 0.44 * deltaAngle;
+      const p1x = Math.cos(t1) * rRoot;
+      const p1y = Math.sin(t1) * rRoot;
+
+      // Point 2: Tooth base start (wide root)
+      const t2 = theta - 0.28 * deltaAngle;
+      const p2x = Math.cos(t2) * rRoot;
+      const p2y = Math.sin(t2) * rRoot;
+
+      // Point 3: Pitch flank (tapering inward)
+      const t3 = theta - 0.16 * deltaAngle;
+      const p3x = Math.cos(t3) * rPitch;
+      const p3y = Math.sin(t3) * rPitch;
+
+      // Point 4: Sharp pointed tip crest (left, narrow apex)
+      const t4 = theta - 0.04 * deltaAngle;
+      const p4x = Math.cos(t4) * rTip;
+      const p4y = Math.sin(t4) * rTip;
+
+      // Point 5: Sharp pointed tip crest (right)
+      const t5 = theta + 0.04 * deltaAngle;
+      const p5x = Math.cos(t5) * rTip;
+      const p5y = Math.sin(t5) * rTip;
+
+      // Point 6: Pitch flank (right)
+      const t6 = theta + 0.16 * deltaAngle;
+      const p6x = Math.cos(t6) * rPitch;
+      const p6y = Math.sin(t6) * rPitch;
+
+      // Point 7: Tooth base end (right)
+      const t7 = theta + 0.28 * deltaAngle;
+      const p7x = Math.cos(t7) * rRoot;
+      const p7y = Math.sin(t7) * rRoot;
+
+      if (i === 0) {
+        shape.moveTo(p1x, p1y);
+      } else {
+        shape.lineTo(p1x, p1y);
+      }
+      shape.lineTo(p2x, p2y);
+      shape.lineTo(p3x, p3y);
+      shape.lineTo(p4x, p4y);
+      shape.lineTo(p5x, p5y);
+      shape.lineTo(p6x, p6y);
+      shape.lineTo(p7x, p7y);
     }
+    shape.closePath();
+
+    // 3. Cutout window holes for open spoke clockwork design
+    if (hasSpokes) {
+      const spokeHoleInner = radius * 0.36;
+      const spokeHoleOuter = rRoot - 0.35;
+      if (spokeHoleOuter > spokeHoleInner + 0.3) {
+        for (let s = 0; s < 4; s++) {
+          const sStart = (s / 4) * Math.PI * 2 + 0.18;
+          const sEnd = ((s + 1) / 4) * Math.PI * 2 - 0.18;
+          const spokeHole = new THREE.Path();
+          const arcDivs = 8;
+          for (let k = 0; k <= arcDivs; k++) {
+            const a = sStart + (k / arcDivs) * (sEnd - sStart);
+            const x = Math.cos(a) * spokeHoleOuter;
+            const y = Math.sin(a) * spokeHoleOuter;
+            if (k === 0) spokeHole.moveTo(x, y);
+            else spokeHole.lineTo(x, y);
+          }
+          for (let k = arcDivs; k >= 0; k--) {
+            const a = sStart + (k / arcDivs) * (sEnd - sStart);
+            const x = Math.cos(a) * spokeHoleInner;
+            const y = Math.sin(a) * spokeHoleInner;
+            spokeHole.lineTo(x, y);
+          }
+          spokeHole.closePath();
+          shape.holes.push(spokeHole);
+        }
+      }
+    }
+
+    // 4. Extrude the gear with crisp bevels along the shaft axis
+    const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+      depth: thickness,
+      bevelEnabled: true,
+      bevelThickness: 0.15,
+      bevelSize: 0.10,
+      bevelSegments: 2,
+      curveSegments: 1,
+    };
+    const gearGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    // Center along extrusion depth:
+    gearGeo.translate(0, 0, -thickness / 2);
+    // Rotate so extrusion depth aligns with 3D scene X axis:
+    gearGeo.rotateY(Math.PI / 2);
+    gearGeo.computeVertexNormals();
+
+    const gearMesh = new THREE.Mesh(gearGeo, brassMaterial);
+    gearMesh.castShadow = true;
+    gearMesh.receiveShadow = true;
+    gearGroup.add(gearMesh);
 
     return gearGroup;
   };
@@ -382,23 +480,24 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const r = refl / 100;
     const ro = rough / 100;
 
-    // 1. Planar Mirror Reflection (Reflector: reflects inside of music box, paper strip & mechanism)
+    // 1. Planar Mirror Reflection on Glass Inner Surface (玻璃内侧为唯一定向反射面)
     if (reflectorRef.current) {
       const reflector = reflectorRef.current;
-      // Mirror reflector only active when reflectivity is high and not in pure glass observation mode
-      const isMirrorActive = r > 0.35 && t < 0.90;
+      // Mirror reflector active for mirror mode and semi-reflective half-mirror mode
+      const isMirrorActive = r > 0.20 && t < 0.95;
       reflector.visible = isMirrorActive;
 
       if (isMirrorActive) {
-        // Opacity of mirror reflection: at t=0 (mirror mode), opacity=1.0; at t=0.5 (half mode), opacity ~0.4; at t=1, 0
+        // Reflector opacity: scaled by reflectivity and transmittance
         const mirrorOpacity = Math.min(0.98, Math.max(0.0, r * (1.0 - t * 0.85)));
         const mat = reflector.material as THREE.ShaderMaterial;
         if (mat.uniforms && mat.uniforms.opacity) {
           mat.uniforms.opacity.value = mirrorOpacity;
         }
         mat.transparent = true;
-        mat.depthWrite = mirrorOpacity >= 0.92;
-        reflector.renderOrder = 20;
+        mat.depthWrite = mirrorOpacity >= 0.95;
+        mat.side = THREE.FrontSide; // Only reflect from inner face facing into the music box!
+        reflector.renderOrder = 15;
 
         if (mat.uniforms && mat.uniforms.color) {
           mat.uniforms.color.value.setHex(0xD8DDE2);
@@ -406,7 +505,8 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       }
     }
 
-    // 2. Physical Glass Slab (Transmission & Thickness)
+    // 2. Physical Glass Pane (Pure Optical Transmission - other surfaces do NOT reflect)
+    // 玻璃基板纯透光呈现，外表面不参与反射，杜绝双表面干涉抖动
     if (glassMaterialRef.current && glassMeshRef.current) {
       const mat = glassMaterialRef.current;
       const isGlassActive = t > 0.05 || r < 0.95;
@@ -414,12 +514,12 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
       if (isGlassActive) {
         mat.transmission = t * 0.96;
-        mat.opacity = Math.max(0.08, (1.0 - t) * 0.82);
-        mat.metalness = r * (1.0 - t * 0.88);
+        mat.opacity = Math.max(0.06, (1.0 - t) * 0.80);
+        mat.metalness = 0.0;     // No conflicting metallic reflection on outer surfaces
         mat.roughness = Math.max(0.01, ro);
-        mat.reflectivity = r;
-        mat.clearcoat = Math.max(0.3, r);
-        mat.clearcoatRoughness = Math.max(0.01, ro * 0.4);
+        mat.reflectivity = 0.0;  // 0% outer reflection to eliminate dual-surface shimmer
+        mat.clearcoat = 0.0;     // No outer clearcoat reflection
+        mat.clearcoatRoughness = 0.0;
         mat.transparent = true;
         mat.depthWrite = false;
         glassMeshRef.current.renderOrder = 10;
@@ -427,7 +527,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         if (t > 0.6) {
           mat.color.setHex(0xE8F2FC); // Clean optical crystal tint
         } else if (r > 0.5) {
-          mat.color.setHex(0xD8DDE2); // Polished mercury silver
+          mat.color.setHex(0xD8DDE2); // Polished silver tint
         } else {
           mat.color.setHex(0xCCCCCC);
         }
@@ -451,19 +551,19 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     if (preset === 'mirror') {
       setTransmittance(0);
       setReflectivity(98);
-      setRoughness(4);
+      setRoughness(3);
     } else if (preset === 'glass') {
-      setTransmittance(92);
-      setReflectivity(25);
-      setRoughness(4);
+      setTransmittance(95);
+      setReflectivity(0);
+      setRoughness(2);
     } else if (preset === 'half') {
       setTransmittance(50);
       setReflectivity(60);
       setRoughness(5);
     } else if (preset === 'frosted') {
-      setTransmittance(70);
-      setReflectivity(20);
-      setRoughness(48);
+      setTransmittance(75);
+      setReflectivity(0);
+      setRoughness(45);
     }
   };
 
@@ -741,8 +841,9 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     lidRailBack.castShadow = true;
     lidGroup.add(lidRailBack);
 
-    // 5A. True Planar Mirror Reflector (真实光学镜面成像：对八音盒机芯、纸带、齿轮产生精准倒影)
-    const reflectorGeo = new THREE.PlaneGeometry(lidInnerW, lidInnerD);
+    // 5A. True Planar Mirror Reflector on Inner Surface (玻璃内侧镜面成像)
+    // Inset slightly by 1.0mm from frame rails to completely prevent edge clipping / Z-fighting with wood
+    const reflectorGeo = new THREE.PlaneGeometry(lidInnerW - 1.0, lidInnerD - 1.0);
     const mirrorCustomShader = {
       name: 'MusicBoxMirrorShader',
       uniforms: {
@@ -786,7 +887,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     };
 
     const mirrorReflector = new Reflector(reflectorGeo, {
-      clipBias: 0.003,
+      clipBias: 0.0001, // Minimal clipBias prevents edge clipping flutter
       textureWidth: 1024,
       textureHeight: 1024,
       color: 0xD8DDE2,
@@ -794,23 +895,25 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       shader: mirrorCustomShader,
     });
     mirrorReflector.rotation.x = Math.PI / 2;
-    mirrorReflector.position.set(0, 1.3, lidFrameD / 2);
+    mirrorReflector.position.set(0, 1.4, lidFrameD / 2);
+    (mirrorReflector.material as THREE.ShaderMaterial).side = THREE.FrontSide; // Only reflect from inner face facing into the music box!
     lidGroup.add(mirrorReflector);
     reflectorRef.current = mirrorReflector;
 
-    // 5B. Physical Transparent Glass Slab (for transparent observation window mode)
-    const glassGeo = new THREE.BoxGeometry(lidInnerW, 1.8, lidInnerD);
+    // 5B. Physical Transparent Glass Pane (Pure Optical Transmission - other surfaces do NOT reflect)
+    // Inset slightly to prevent overlapping edges
+    const glassGeo = new THREE.BoxGeometry(lidInnerW - 1.0, 1.4, lidInnerD - 1.0);
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: 0xE8F2FC,
-      metalness: 0.05,
-      roughness: 0.04,
-      transmission: 0.94,
+      metalness: 0.0,
+      roughness: 0.02,
+      transmission: 0.95,
       transparent: true,
-      opacity: 0.20,
+      opacity: 0.15,
       ior: 1.52,
-      reflectivity: 0.35,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
+      reflectivity: 0.0, // Outer surfaces have 0 reflection to avoid double-surface fighting
+      clearcoat: 0.0,
+      clearcoatRoughness: 0.0,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -979,17 +1082,17 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     // Realistic 3.08 : 1 Reduction Ratio: Crank turns ~3 times per roller turn!
     const gearX = 35; // Positioned between paper right edge (23) and right wall (63)
 
-    // Stage 1 Driving Gear: Small Pinion on Crank Shaft at (x = 35, y = 4.0, z = 0)
-    // Z1 = 10 teeth, radius 3.2mm, thickness 2.6mm
-    const gear1Group = createGearMesh(3.2, 2.6, 10, brassMat);
+    // Stage 1 Driving Gear: Large Spur Gear on Crank Shaft at (x = 35, y = 4.0, z = 0)
+    // Z1 = 20 teeth, radius 5.8mm with elegant spokes (Large driver reduces crank rotation speed)
+    const gear1Group = createGearMesh(5.8, 2.4, 20, brassMat, true);
     gear1Group.position.set(gearX, paperY, 0);
     mechGroup.add(gear1Group);
     gear1Ref.current = gear1Group;
 
-    // Stage 1 Driven + Stage 2 Driving: Compound Intermediate Gear Unit at (y = 11.2, z = -7.0)
-    // Meshes with Gear 1 (Z1 = 10 -> Z2A = 22, ratio 2.2:1)
+    // Stage 1 Driven + Stage 2 Driving: Compound Intermediate Gear Unit at (y = 11.9, z = -5.5)
+    // True pitch circle tangency: d(Gear1, Gear2A) = 9.60mm, d(Gear2B, Gear3) = 9.15mm
     const gear2CompoundGroup = new THREE.Group();
-    gear2CompoundGroup.position.set(gearX, 11.2, -7.0);
+    gear2CompoundGroup.position.set(gearX, 11.9, -5.5);
     mechGroup.add(gear2CompoundGroup);
     gear2Ref.current = gear2CompoundGroup;
 
@@ -1000,28 +1103,29 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     interAxleMesh.position.set(2.0, 0, 0);
     gear2CompoundGroup.add(interAxleMesh);
 
-    // Gear 2A: Large Intermediate Reduction Gear (Z2A = 22 teeth, radius 7.0mm with elegant spokes)
-    const gear2AGroup = createGearMesh(7.0, 2.2, 22, brassMat, true);
+    // Gear 2A: Intermediate Pinion (Z2A = 12 teeth, radius 3.8mm, driven by Gear 1)
+    const gear2AGroup = createGearMesh(3.8, 2.2, 12, brassMat);
     gear2AGroup.position.set(0, 0, 0);
     gear2CompoundGroup.add(gear2AGroup);
 
-    // Gear 2B: Coaxial Intermediate Stepping Pinion (Z2B = 10 teeth, radius 3.2mm)
+    // Gear 2B: Coaxial Intermediate Stepping Gear (Z2B = 18 teeth, radius 5.4mm with spokes)
     // Shifted along X by +3.2mm to mesh with Gear 3
-    const gear2BGroup = createGearMesh(3.2, 2.4, 10, brassMat);
+    const gear2BGroup = createGearMesh(5.4, 2.2, 18, brassMat, true);
     gear2BGroup.position.set(3.2, 0, 0);
     gear2CompoundGroup.add(gear2BGroup);
 
     // Stage 2 Driven Gear: Roller Spur Gear on Feed Roller Axle (z = -14, y = rollerY)
-    // Meshes with Gear 2B (Z2B = 10 -> Z3 = 14, ratio 1.4:1)
-    // Total Gear Ratio = 2.2 * 1.4 = 3.08 : 1
-    const gear3Group = createGearMesh(4.4, 2.6, 14, brassMat);
+    // Meshes with Gear 2B (Z2B = 18 -> Z3 = 12 teeth, radius 3.8mm)
+    // Total Speed-Up Ratio = (20/12) * (18/12) = 2.5 : 1
+    // Crank speed is lowered to natural, gentle hand-crank speed!
+    const gear3Group = createGearMesh(3.8, 2.4, 12, brassMat);
     gear3Group.position.set(gearX + 3.2, rollerY, rollerZ);
     mechGroup.add(gear3Group);
     gear3Ref.current = gear3Group;
 
     // Outer Gearbox Support Bracket with bearing bosses
     const gearPlate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 18, 26), brassMat);
-    gearPlate.position.set(gearX + 5.5, 7.8, -7.0);
+    gearPlate.position.set(gearX + 5.5, 8.2, -6.5);
     mechGroup.add(gearPlate);
 
     const bossGeo = new THREE.CylinderGeometry(2.0, 2.0, 1.5, 12);
@@ -1031,7 +1135,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     mechGroup.add(bossCrank);
 
     const bossInter = new THREE.Mesh(bossGeo, brassMat);
-    bossInter.position.set(gearX + 6.2, 11.2, -7.0);
+    bossInter.position.set(gearX + 6.2, 11.9, -5.5);
     mechGroup.add(bossInter);
 
     const bossRoller = new THREE.Mesh(bossGeo, brassMat);
@@ -1061,7 +1165,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       roughness: 0.72,
       metalness: 0.02,
       side: THREE.DoubleSide,
-      transparent: true,
+      transparent: false,
       alphaTest: 0.5,
       depthWrite: true,
       shadowSide: THREE.DoubleSide,
@@ -1130,6 +1234,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const continuousPaperMesh = new THREE.Mesh(continuousPaperGeo, paperMaterial);
     continuousPaperMesh.castShadow = true;
     continuousPaperMesh.receiveShadow = true;
+    continuousPaperMesh.renderOrder = 0;
     musicBoxGroup.add(continuousPaperMesh);
 
     // 9. Brass Hand Crank on right exterior wall
@@ -1204,14 +1309,16 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         }
       }
 
-      // Synchronous Two-Stage Compound Reduction Gear Transmission (Ratio 3.08 : 1)
-      // Crank Pinion 1 (Z1=10) -> Compound Gear 2 (Z2A=22, Z2B=10) -> Feed Roller Gear 3 (Z3=14)
-      // Paper pitch: 5.0mm/step. Roller radius: 4.8mm.
-      // Roller angular speed: 5.0 / 4.8 = 1.0417 rad/step (zero paper slip)
-      // Crank angular speed with 3.08:1 reduction: 1.0417 * 3.08 = 3.208 rad/step
-      const crankAngle = currentStepRef.current * 3.208;
-      const gear2Angle = -crankAngle * (10 / 22);
-      const rollerAngle = -gear2Angle * (10 / 14); // = crankAngle / 3.08 = 1.0417 * currentStep
+      // Synchronous Two-Stage Compound Gear Transmission (Lowered Crank Speed & Natural Cadence)
+      // Tooth meshing: Crank Gear 1 (Z1=20) -> Compound Gear 2A (Z2A=12, Z2B=18) -> Feed Roller Gear 3 (Z3=12)
+      // Compound gear ratio from crank to feed roller: i = (20 / 12) * (18 / 12) = 2.5 : 1
+      // Paper feed linear pitch: 5.0mm/step. Feed roller radius: 4.8mm.
+      // Roller angular displacement: 5.0 / 4.8 = 1.04167 rad/step (zero paper slip)
+      // Reduced crank speed: 1.04167 / 2.5 = 0.41667 rad/step (lowered ~7.7x, ~15 steps per complete 360° turn)
+      const crankAngle = currentStepRef.current * 0.41667;
+      // Phase offset Math.PI / 12 ensures Gear 2A pointed teeth cleanly enter Gear 1 root valleys
+      const gear2Angle = -crankAngle * (20 / 12) + (Math.PI / 12);
+      const rollerAngle = -(gear2Angle - (Math.PI / 12)) * (18 / 12) + (Math.PI / 12);
 
       if (crankGroupRef.current) {
         crankGroupRef.current.rotation.x = crankAngle;
@@ -1290,24 +1397,40 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
 
 
-  // Mouse / Touch Event Handlers for 3D Orbit Navigation
+  // Mouse / Touch Event Handlers for 3D Orbit & Pan Navigation
   const handleMouseDown = (e: React.MouseEvent) => {
-    isOrbiting.current = true;
+    // Determine whether rotating or panning:
+    // Right button (2), Middle button (1), Shift key, or navMode === 'pan' triggers pan
+    if (e.button === 2 || e.button === 1 || e.shiftKey || navMode === 'pan') {
+      isPanning.current = true;
+      isOrbiting.current = false;
+    } else {
+      isOrbiting.current = true;
+      isPanning.current = false;
+    }
     lastMousePos.current = { x: e.clientX, y: e.clientY };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isOrbiting.current) return;
+    if (!isOrbiting.current && !isPanning.current) return;
     const dx = e.clientX - lastMousePos.current.x;
     const dy = e.clientY - lastMousePos.current.y;
     lastMousePos.current = { x: e.clientX, y: e.clientY };
 
-    targetCameraTheta.current += dx * 0.008;
-    targetCameraPhi.current = Math.max(0.16, Math.min(Math.PI / 2 - 0.04, targetCameraPhi.current - dy * 0.008));
+    if (isPanning.current) {
+      panCamera(dx, dy);
+    } else if (isOrbiting.current) {
+      // Intuitive orbit rotation matching human expectation and OrbitControls:
+      // Dragging right rotates music box to the right (theta decreases)
+      // Dragging up views from higher elevation/top (phi decreases towards zenith)
+      targetCameraTheta.current -= dx * 0.006;
+      targetCameraPhi.current = Math.max(0.10, Math.min(Math.PI / 2 - 0.02, targetCameraPhi.current - dy * 0.006));
+    }
   };
 
   const handleMouseUp = () => {
     isOrbiting.current = false;
+    isPanning.current = false;
   };
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -1317,23 +1440,67 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
-      isOrbiting.current = true;
+      if (navMode === 'pan') {
+        isPanning.current = true;
+        isOrbiting.current = false;
+      } else {
+        isOrbiting.current = true;
+        isPanning.current = false;
+      }
       lastMousePos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2) {
+      isOrbiting.current = false;
+      isPanning.current = true;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDist.current = Math.hypot(dx, dy);
+      touchStartMid.current = {
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+      };
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isOrbiting.current || e.touches.length !== 1) return;
-    const dx = e.touches[0].clientX - lastMousePos.current.x;
-    const dy = e.touches[0].clientY - lastMousePos.current.y;
-    lastMousePos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (e.touches.length === 1) {
+      const dx = e.touches[0].clientX - lastMousePos.current.x;
+      const dy = e.touches[0].clientY - lastMousePos.current.y;
+      lastMousePos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
 
-    targetCameraTheta.current += dx * 0.008;
-    targetCameraPhi.current = Math.max(0.16, Math.min(Math.PI / 2 - 0.04, targetCameraPhi.current - dy * 0.008));
+      if (isPanning.current) {
+        panCamera(dx, dy);
+      } else if (isOrbiting.current) {
+        targetCameraTheta.current -= dx * 0.006;
+        targetCameraPhi.current = Math.max(0.10, Math.min(Math.PI / 2 - 0.02, targetCameraPhi.current - dy * 0.006));
+      }
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const currentDist = Math.hypot(dx, dy);
+      const currentMid = {
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+      };
+
+      // Pinch zoom
+      if (touchStartDist.current > 0) {
+        const pinchDelta = touchStartDist.current - currentDist;
+        targetCameraDistance.current = Math.max(70, Math.min(380, targetCameraDistance.current + pinchDelta * 0.6));
+        touchStartDist.current = currentDist;
+      }
+
+      // Two-finger pan
+      const panDx = currentMid.x - touchStartMid.current.x;
+      const panDy = currentMid.y - touchStartMid.current.y;
+      touchStartMid.current = currentMid;
+      panCamera(panDx, panDy);
+    }
   };
 
   const handleTouchEnd = () => {
     isOrbiting.current = false;
+    isPanning.current = false;
+    touchStartDist.current = 0;
   };
 
   return (
@@ -1341,11 +1508,16 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       {/* 3D WebGL Canvas Container */}
       <div
         ref={containerRef}
-        className="w-full flex-1 cursor-grab active:cursor-grabbing"
+        className={`w-full flex-1 select-none ${
+          navMode === 'pan' 
+            ? 'cursor-move' 
+            : 'cursor-grab active:cursor-grabbing'
+        }`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onContextMenu={(e) => e.preventDefault()}
         onWheel={handleWheel}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -1436,6 +1608,57 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
           }`}
         >
           <span>前面板进纸槽</span>
+        </button>
+
+        <div className="w-[1px] h-4 bg-stone-800 mx-0.5" />
+
+        {/* View Mode Toggle: Orbit vs Pan */}
+        <div className="flex items-center bg-stone-950/80 p-0.5 rounded-md border border-stone-800/80">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setNavMode('orbit');
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded transition-colors cursor-pointer ${
+              navMode === 'orbit'
+                ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+            title="左键拖拽旋转视角 (也可随时按住鼠标右键平移)"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>旋转</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setNavMode('pan');
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded transition-colors cursor-pointer ${
+              navMode === 'pan'
+                ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+            title="拖拽平移移动视角 (也可按住右键/中键/Shift直接平移)"
+          >
+            <Move className="w-3 h-3" />
+            <span>平移</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            targetCameraTarget.current.set(4, 2, 2);
+            setCameraPreset('photo');
+          }}
+          className="flex items-center gap-1 px-2 py-1 text-xs text-stone-400 hover:text-stone-200 hover:bg-stone-800/60 rounded-md transition-colors cursor-pointer"
+          title="复位视角和居中位置"
+        >
+          <span>复位</span>
         </button>
       </div>
 
@@ -1673,6 +1896,11 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         )}
       </div>
 
+      {/* 3. Navigation Operation Hint Badge (Bottom-Left) */}
+      <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-2 px-3 py-1.5 bg-stone-900/80 backdrop-blur-md border border-stone-800/80 rounded-lg text-xs text-stone-300 shadow-md">
+        <span className="text-amber-400 font-medium">💡 视角操作：</span>
+        <span>左键旋转 · 右键 / 中键 / Shift拖拽平移 · 滚轮缩放</span>
+      </div>
     </div>
   );
 };
