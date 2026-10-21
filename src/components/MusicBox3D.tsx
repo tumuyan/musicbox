@@ -32,6 +32,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeView, setActiveView] = useState<'photo' | 'top' | 'front' | 'macro' | 'gears'>('photo');
+  const [isViewMenuOpen, setIsViewMenuOpen] = useState<boolean>(false);
 
   // Lid angle and glass parameters state (Default: 100° open, half-reflective half-transparent)
   const [lidAngle, setLidAngle] = useState<number>(100); // 0° to 120°
@@ -63,11 +64,18 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   const paperCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const paperTextureRef = useRef<THREE.CanvasTexture | null>(null);
 
-  // Synchronous Step Reference for the render loop
+  const starWheelsRef = useRef<THREE.Group[]>([]);
+
+  // Synchronous Step and Song References for the render loop
   const currentStepRef = useRef(currentStep);
   useEffect(() => {
     currentStepRef.current = currentStep;
   }, [currentStep]);
+
+  const songRef = useRef(song);
+  useEffect(() => {
+    songRef.current = song;
+  }, [song]);
 
 
 
@@ -359,53 +367,62 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const collarMesh = new THREE.Mesh(collarGeo, brassMaterial);
     gearGroup.add(collarMesh);
 
-    // 2. Generate 2D Gear Profile Shape with pointed, tapered teeth for smooth interlocking mesh
+    // 2. Generate 2D Gear Profile Shape with authentic sharp, pointed & tapered clockwork teeth for clear interlocking
     const shape = new THREE.Shape();
     const deltaAngle = (Math.PI * 2) / numTeeth;
     const module = (2 * radius) / numTeeth;
-    const ha = 0.90 * module; // Addendum (tooth tip extension)
-    const hd = 1.10 * module; // Dedendum (tooth root depth)
-    const rRoot = Math.max(radius * 0.52, radius - hd);
+    const ha = 1.15 * module; // Taller addendum for authentic deep tooth bite
+    const hd = 1.25 * module; // Deeper dedendum for clear root clearance
+    const rRoot = Math.max(radius * 0.44, radius - hd);
     const rTip = radius + ha;
     const rPitch = radius;
 
     for (let i = 0; i < numTeeth; i++) {
       const theta = i * deltaAngle;
 
-      // Point 1: Root trough start
-      const t1 = theta - 0.44 * deltaAngle;
+      // Point 1: Deep root valley trough start
+      const t1 = theta - 0.46 * deltaAngle;
       const p1x = Math.cos(t1) * rRoot;
       const p1y = Math.sin(t1) * rRoot;
 
-      // Point 2: Tooth base start (wide root)
-      const t2 = theta - 0.28 * deltaAngle;
-      const p2x = Math.cos(t2) * rRoot;
-      const p2y = Math.sin(t2) * rRoot;
+      // Point 2: Tooth base root fillet (taper starts promptly)
+      const t2 = theta - 0.20 * deltaAngle;
+      const p2x = Math.cos(t2) * (rRoot + 0.12 * hd);
+      const p2y = Math.sin(t2) * (rRoot + 0.12 * hd);
 
-      // Point 3: Pitch flank (tapering inward)
-      const t3 = theta - 0.16 * deltaAngle;
+      // Point 3: Pitch line flank (narrow, tapered)
+      const t3 = theta - 0.08 * deltaAngle;
       const p3x = Math.cos(t3) * rPitch;
       const p3y = Math.sin(t3) * rPitch;
 
-      // Point 4: Sharp pointed tip crest (left, narrow apex)
-      const t4 = theta - 0.04 * deltaAngle;
-      const p4x = Math.cos(t4) * rTip;
-      const p4y = Math.sin(t4) * rTip;
+      // Point 4: Sharp pointed apex tip crest (very pointed triangular apex)
+      const t4 = theta - 0.015 * deltaAngle;
+      const p4x = Math.cos(t4) * (rTip - 0.03 * ha);
+      const p4y = Math.sin(t4) * (rTip - 0.03 * ha);
 
-      // Point 5: Sharp pointed tip crest (right)
-      const t5 = theta + 0.04 * deltaAngle;
-      const p5x = Math.cos(t5) * rTip;
-      const p5y = Math.sin(t5) * rTip;
+      // Point 5: Sharp apex point
+      const p5x = Math.cos(theta) * rTip;
+      const p5y = Math.sin(theta) * rTip;
 
-      // Point 6: Pitch flank (right)
-      const t6 = theta + 0.16 * deltaAngle;
-      const p6x = Math.cos(t6) * rPitch;
-      const p6y = Math.sin(t6) * rPitch;
+      // Point 6: Sharp pointed apex tip right
+      const t6 = theta + 0.015 * deltaAngle;
+      const p6x = Math.cos(t6) * (rTip - 0.03 * ha);
+      const p6y = Math.sin(t6) * (rTip - 0.03 * ha);
 
-      // Point 7: Tooth base end (right)
-      const t7 = theta + 0.28 * deltaAngle;
-      const p7x = Math.cos(t7) * rRoot;
-      const p7y = Math.sin(t7) * rRoot;
+      // Point 7: Right pitch line flank
+      const t7 = theta + 0.08 * deltaAngle;
+      const p7x = Math.cos(t7) * rPitch;
+      const p7y = Math.sin(t7) * rPitch;
+
+      // Point 8: Tooth base right root fillet
+      const t8 = theta + 0.20 * deltaAngle;
+      const p8x = Math.cos(t8) * (rRoot + 0.12 * hd);
+      const p8y = Math.sin(t8) * (rRoot + 0.12 * hd);
+
+      // Point 9: Deep root valley trough end
+      const t9 = theta + 0.46 * deltaAngle;
+      const p9x = Math.cos(t9) * rRoot;
+      const p9y = Math.sin(t9) * rRoot;
 
       if (i === 0) {
         shape.moveTo(p1x, p1y);
@@ -418,6 +435,8 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       shape.lineTo(p5x, p5y);
       shape.lineTo(p6x, p6y);
       shape.lineTo(p7x, p7y);
+      shape.lineTo(p8x, p8y);
+      shape.lineTo(p9x, p9y);
     }
     shape.closePath();
 
@@ -450,12 +469,12 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       }
     }
 
-    // 4. Extrude the gear with crisp bevels along the shaft axis
+    // 4. Extrude the gear with crisp, delicate bevels along the shaft axis that preserve pointed tooth tips
     const extrudeSettings: THREE.ExtrudeGeometryOptions = {
       depth: thickness,
       bevelEnabled: true,
-      bevelThickness: 0.15,
-      bevelSize: 0.10,
+      bevelThickness: 0.05,
+      bevelSize: 0.03,
       bevelSegments: 2,
       curveSegments: 1,
     };
@@ -472,6 +491,51 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     gearGroup.add(gearMesh);
 
     return gearGroup;
+  };
+
+  // Helper to generate pointed 6-tooth brass star-wheel geometry (齿状金属星轮)
+  const createStarWheelGeometry = (): THREE.BufferGeometry => {
+    const shape = new THREE.Shape();
+    const numTeeth = 6;
+    const rTip = 2.10;  // Sharp pointed tooth tip radius
+    const rRoot = 1.30; // Root valley radius
+
+    for (let j = 0; j < numTeeth; j++) {
+      const angleRoot1 = (j * 2 * Math.PI) / numTeeth - Math.PI / (numTeeth * 1.4);
+      const angleTip = (j * 2 * Math.PI) / numTeeth;
+      const angleRoot2 = (j * 2 * Math.PI) / numTeeth + Math.PI / (numTeeth * 1.4);
+
+      const xR1 = Math.cos(angleRoot1) * rRoot;
+      const yR1 = Math.sin(angleRoot1) * rRoot;
+      const xTip = Math.cos(angleTip) * rTip;
+      const yTip = Math.sin(angleTip) * rTip;
+      const xR2 = Math.cos(angleRoot2) * rRoot;
+      const yR2 = Math.sin(angleRoot2) * rRoot;
+
+      if (j === 0) {
+        shape.moveTo(xR1, yR1);
+      } else {
+        shape.lineTo(xR1, yR1);
+      }
+      // Ramps up to sharp pointed tooth apex
+      shape.lineTo(xTip, yTip);
+      // Drops down to root
+      shape.lineTo(xR2, yR2);
+    }
+    shape.closePath();
+
+    const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+      depth: 0.55,
+      bevelEnabled: true,
+      bevelThickness: 0.04,
+      bevelSize: 0.03,
+      bevelSegments: 2,
+    };
+    const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    geo.translate(0, 0, -0.275); // Center along extrusion depth
+    geo.rotateY(Math.PI / 2);    // Axle along X, teeth rotate in Z-Y plane
+    geo.computeVertexNormals();
+    return geo;
   };
 
   // Apply glass transmittance, reflectivity, and roughness with TRUE optical planar mirror reflection
@@ -961,85 +1025,136 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     tinesRef.current = [];
 
     // =========================================================================
-    // Lower Paper Guide Plate & Star-Wheel Carrier (下托纸金属板与星轮阵列)
-    // Positioned directly UNDER the paper strip at y = 3.65 (so through-holes see real mechanism)
+    // Lower Paper Guide Bed & Star-Wheel Carrier (下托纸金属导向板与星轮阵列)
+    // Firmly supports paper underneath front/rear lips, with central recessed channel for star wheels
     // =========================================================================
-    const lowerPlateGeo = new THREE.BoxGeometry(48, 0.65, 18);
-    const lowerPlateMesh = new THREE.Mesh(lowerPlateGeo, brassMat);
-    lowerPlateMesh.position.set(0, paperY - 0.35, 0);
-    lowerPlateMesh.receiveShadow = true;
-    mechGroup.add(lowerPlateMesh);
+    // Front Lower Guide Bed Plate (Supports paper under front pressure lip at z in [5.25, 11.75])
+    // Positioned with top face at y = 3.50mm, leaving a safe 0.5mm clearance below paper ribbon (y = 4.0mm) to prevent Z-fighting
+    const lowerFrontPlateGeo = new THREE.BoxGeometry(50, 1.2, 6.5);
+    const lowerFrontPlateMesh = new THREE.Mesh(lowerFrontPlateGeo, brassMat);
+    lowerFrontPlateMesh.position.set(0, paperY - 0.5 - 0.6, 8.5);
+    lowerFrontPlateMesh.receiveShadow = true;
+    mechGroup.add(lowerFrontPlateMesh);
 
-    // Star-Wheel Carrier steel axle at z = 0, y = 2.0
-    const starWheelAxleGeo = new THREE.CylinderGeometry(0.85, 0.85, 42, 16);
+    // Rear Lower Guide Bed Plate (Supports paper under rear pressure lip at z in [-11.75, -5.25])
+    // Positioned with top face at y = 3.50mm, leaving safe 0.5mm clearance below paper ribbon (y = 4.0mm)
+    const lowerRearPlateGeo = new THREE.BoxGeometry(50, 1.2, 6.5);
+    const lowerRearPlateMesh = new THREE.Mesh(lowerRearPlateGeo, brassMat);
+    lowerRearPlateMesh.position.set(0, paperY - 0.5 - 0.6, -8.5);
+    lowerRearPlateMesh.receiveShadow = true;
+    mechGroup.add(lowerRearPlateMesh);
+
+    // Recessed Star-Wheel Carrier block (Recessed below the paper deformation arch so it never clips)
+    const carrierBlockGeo = new THREE.BoxGeometry(46, 2.0, 11.5);
+    const carrierBlockMesh = new THREE.Mesh(carrierBlockGeo, brassMat);
+    carrierBlockMesh.position.set(0, 1.4, 0);
+    carrierBlockMesh.receiveShadow = true;
+    mechGroup.add(carrierBlockMesh);
+
+    // Star-Wheel Carrier steel axle at z = 0, y = 1.85
+    const starWheelAxleGeo = new THREE.CylinderGeometry(0.7, 0.7, 44, 16);
     starWheelAxleGeo.rotateZ(Math.PI / 2);
     const starWheelAxleMesh = new THREE.Mesh(starWheelAxleGeo, steelCombMat);
-    starWheelAxleMesh.position.set(0, paperY - 1.8, 0);
+    starWheelAxleMesh.position.set(0, 1.85, 0);
     mechGroup.add(starWheelAxleMesh);
 
-    // 15 Star-Wheels aligned with the 15 pitch guide lines
-    const starWheelPitch = 32.2 / (TOTAL_TINES - 1); // 2.3mm
+    // 30 Pointed Brass Star-Wheels (齿状金属星轮) aligned with the 30 pitch channels
+    // When paper has no hole, tooth tips rest flush below paper bottom (y_top <= 3.95 < y_paper_arch 4.36).
+    // When a hole passes the read line, the tooth pops up through the hole aperture (y_top = 4.50)!
+    const starWheelPitch = 32.2 / (TOTAL_TINES - 1); // ~1.11mm
     const starWheelStart = -16.1;
-    const starWheelGeo = new THREE.CylinderGeometry(2.1, 2.1, 0.65, 12);
-    starWheelGeo.rotateZ(Math.PI / 2);
+    const starWheelGeo = createStarWheelGeometry();
+    const swGroups: THREE.Group[] = [];
 
     for (let i = 0; i < TOTAL_TINES; i++) {
       const sx = starWheelStart + i * starWheelPitch;
+      const swGroup = new THREE.Group();
+      swGroup.position.set(sx, 1.85, 0);
+
       const swMesh = new THREE.Mesh(starWheelGeo, brassMat);
-      swMesh.position.set(sx, paperY - 1.8, 0);
-      mechGroup.add(swMesh);
+      swMesh.castShadow = true;
+      swGroup.add(swMesh);
+
+      // Fine central hub bushing collar
+      const hubCollarGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.75, 12);
+      hubCollarGeo.rotateZ(Math.PI / 2);
+      const hubCollarMesh = new THREE.Mesh(hubCollarGeo, brassMat);
+      swGroup.add(hubCollarMesh);
+
+      mechGroup.add(swGroup);
+      swGroups.push(swGroup);
     }
+    starWheelsRef.current = swGroups;
 
     // =========================================================================
-    // UPGRADE 2: 上方使用薄金属片压纸 (Thin Metal Spring Plate ABOVE Paper Strip)
+    // UPGRADE 2: 加宽压纸片与大尺寸中间镂空观察窗 (Widened Spring Steel Pressure Plate)
+    // Widen pressure plate along X and Z, with a spacious central cutout window
     // =========================================================================
-    // Thin polished metal plate sitting above the paper at y = 4.35
-    const plateWidth = 48; // Spanning the 46mm paper
-    const plateDepth = 12; // Along Z: from z = +6 to z = -6
-    const plateThick = 0.45; // Thin sheet metal
+    const plateWidth = 52;   // Widened to 52mm (covers 46mm paper with 3mm margin on each side)
+    const plateDepth = 21;   // Spans z = -9.5 to +11.5
+    const plateThick = 0.50; // Spring steel plate thickness
 
-    // Create plate with observation window in center to view holes
     const plateGroup = new THREE.Group();
     plateGroup.position.set(0, paperY + 0.35, 0); // Resting right over paper
     mechGroup.add(plateGroup);
 
-    // Front lip of pressure plate
-    const plateFrontLip = new THREE.Mesh(new THREE.BoxGeometry(plateWidth, plateThick, 3), springSteelMat);
-    plateFrontLip.position.set(0, 0, 4.5);
+    // Front clamping lip of pressure plate (Flat clamping section: z in [6.0, 10.5])
+    const plateFrontLip = new THREE.Mesh(new THREE.BoxGeometry(plateWidth, plateThick, 4.5), springSteelMat);
+    plateFrontLip.position.set(0, 0, 8.25);
     plateGroup.add(plateFrontLip);
 
-    // Back lip of pressure plate
-    const plateBackLip = new THREE.Mesh(new THREE.BoxGeometry(plateWidth, plateThick, 3), springSteelMat);
-    plateBackLip.position.set(0, 0, -4.5);
+    // Flared front entry guide bevel (angled upward by ~14 deg to smoothly guide incoming paper)
+    const frontFlareGeo = new THREE.BoxGeometry(plateWidth, plateThick, 1.7);
+    const frontFlare = new THREE.Mesh(frontFlareGeo, springSteelMat);
+    frontFlare.position.set(0, 0.25, 11.2);
+    frontFlare.rotation.x = -0.24;
+    plateGroup.add(frontFlare);
+
+    // Rear clamping lip of pressure plate (Flat clamping section: z in [-9.5, -6.0])
+    const plateBackLip = new THREE.Mesh(new THREE.BoxGeometry(plateWidth, plateThick, 3.5), springSteelMat);
+    plateBackLip.position.set(0, 0, -7.75);
     plateGroup.add(plateBackLip);
 
-    // Left and right side bands connecting lips
-    const plateSideL = new THREE.Mesh(new THREE.BoxGeometry(5, plateThick, plateDepth), springSteelMat);
-    plateSideL.position.set(-plateWidth / 2 + 2.5, 0, 0);
+    // Flared rear exit guide bevel (angled upward by ~14 deg)
+    const rearFlareGeo = new THREE.BoxGeometry(plateWidth, plateThick, 1.5);
+    const rearFlare = new THREE.Mesh(rearFlareGeo, springSteelMat);
+    rearFlare.position.set(0, 0.22, -10.1);
+    rearFlare.rotation.x = 0.24;
+    plateGroup.add(rearFlare);
+
+    // Left and right side connector rails (Width 3.5mm, spanning the full depth)
+    // Center cutout window between rails is 45.0mm wide (x in [-22.5, +22.5])
+    // Center cutout window between lips is 12.0mm deep (z in [-6.0, +6.0]) - DOUBLED from previous 6mm!
+    const plateSideGeo = new THREE.BoxGeometry(3.5, plateThick, plateDepth);
+    const plateSideL = new THREE.Mesh(plateSideGeo, springSteelMat);
+    plateSideL.position.set(-plateWidth / 2 + 1.75, 0, 0.85);
     plateGroup.add(plateSideL);
 
-    const plateSideR = new THREE.Mesh(new THREE.BoxGeometry(5, plateThick, plateDepth), springSteelMat);
-    plateSideR.position.set(plateWidth / 2 - 2.5, 0, 0);
+    const plateSideR = new THREE.Mesh(plateSideGeo, springSteelMat);
+    plateSideR.position.set(plateWidth / 2 - 1.75, 0, 0.85);
     plateGroup.add(plateSideR);
 
-    // Brass Arch Mounting Brackets & Knurled Thumb Screws holding the pressure plate
-    const archBracketGeo = new THREE.BoxGeometry(3.5, 5, 8);
+    // Brass Arch Mounting Brackets & Dual Knurled Thumb Screws holding the pressure plate
+    const archBracketGeo = new THREE.BoxGeometry(4.0, 5.5, 16);
     const archBracketL = new THREE.Mesh(archBracketGeo, brassMat);
-    archBracketL.position.set(-plateWidth / 2 - 2.5, paperY + 1.2, 0);
+    archBracketL.position.set(-plateWidth / 2 - 2.5, paperY + 1.2, 0.5);
     mechGroup.add(archBracketL);
 
     const archBracketR = new THREE.Mesh(archBracketGeo, brassMat);
-    archBracketR.position.set(plateWidth / 2 + 2.5, paperY + 1.2, 0);
+    archBracketR.position.set(plateWidth / 2 + 2.5, paperY + 1.2, 0.5);
     mechGroup.add(archBracketR);
 
+    // 2 Knurled brass thumbscrews per side at z = +4.5 and z = -4.5
     const thumbScrewGeo = new THREE.CylinderGeometry(2.0, 2.0, 2.5, 16);
-    const thumbScrewL = new THREE.Mesh(thumbScrewGeo, brassMat);
-    thumbScrewL.position.set(-plateWidth / 2 - 2.5, paperY + 4.2, 0);
-    mechGroup.add(thumbScrewL);
+    [-4.5, 4.5].forEach(zPos => {
+      const tsL = new THREE.Mesh(thumbScrewGeo, brassMat);
+      tsL.position.set(-plateWidth / 2 - 2.5, paperY + 4.2, zPos + 0.5);
+      mechGroup.add(tsL);
 
-    const thumbScrewR = new THREE.Mesh(thumbScrewGeo, brassMat);
-    thumbScrewR.position.set(plateWidth / 2 + 2.5, paperY + 4.2, 0);
-    mechGroup.add(thumbScrewR);
+      const tsR = new THREE.Mesh(thumbScrewGeo, brassMat);
+      tsR.position.set(plateWidth / 2 + 2.5, paperY + 4.2, zPos + 0.5);
+      mechGroup.add(tsR);
+    });
 
     // =========================================================================
     // UPGRADE 3: 加粗压纸轮 (Thickened Cylindrical Feed Roller)
@@ -1169,23 +1284,39 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       alphaTest: 0.5,
       depthWrite: true,
       shadowSide: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1.0,
+      polygonOffsetUnits: -4.0,
     });
 
     // Build Continuous Seamless Curved Paper Ribbon passing through front & back slots
+    // Features realistic physical UPWARD BULGE / convex arch across the pressure plate cutout window (压纸片槽处向上凸起)
     const pathPoints: [number, number][] = [
       [145, -14.0], // Front desk edge
       [120, -5.0],
       [95, 1.5],
       [70, 3.6],
       [50, paperY], // FRONT PANEL SLOT CENTER (Exact Entry!)
-      [25, paperY],
-      [0, paperY],  // Read line under pressure plate & above comb
+      [28, paperY],
+      [16, paperY],
+      [10.5, paperY],       // Clamped flat under front lip
+      [6.0, paperY],        // Front lip trailing edge (entering cutout window)
+      [4.5, paperY + 0.12], // Smooth convex upward bulge in hollow cutout window
+      [3.0, paperY + 0.24],
+      [1.5, paperY + 0.32],
+      [0.0, paperY + 0.36], // Read line (apex of upward bulge arch)
+      [-1.5, paperY + 0.32],
+      [-3.0, paperY + 0.24],
+      [-4.5, paperY + 0.12],
+      [-6.0, paperY],       // Rear lip leading edge (entering clamp)
+      [-9.5, paperY],       // Clamped flat under rear lip
+      [-14, paperY],        // Feed roller tangent
       [-25, paperY],
-      [-50, paperY], // REAR PANEL SLOT CENTER (Exact Exit!)
+      [-50, paperY],        // REAR PANEL SLOT CENTER (Exact Exit!)
       [-70, 3.5],
       [-95, 1.0],
       [-120, -6.0],
-      [-140, -14.0], // Rear desk edge
+      [-140, -14.0],        // Rear desk edge
     ];
 
     const numCrossSections = pathPoints.length;
@@ -1201,27 +1332,40 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const positions: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-
     const halfW = paperWidth / 2; // 23mm
+    const numCols = 9;
 
     for (let k = 0; k < numCrossSections; k++) {
-      const [z, y] = pathPoints[k];
+      const [z, yBase] = pathPoints[k];
       const u = 1.0 - (arcLengths[k] / totalArcLength);
 
-      positions.push(-halfW, y, z);
-      uvs.push(u, 0.0);
+      for (let c = 0; c < numCols; c++) {
+        const colFrac = c / (numCols - 1);
+        const x = -halfW + colFrac * paperWidth;
+        const v = colFrac;
 
-      positions.push(halfW, y, z);
-      uvs.push(u, 1.0);
+        // Subtle transverse cardstock convex arch within the hollow cutout region (|z| < 6.0)
+        let y = yBase;
+        if (Math.abs(z) < 6.0) {
+          const transFactor = (1.0 - Math.pow(2 * colFrac - 1, 2)); // 1.0 at center, 0.0 at outer edges
+          const zFactor = (1.0 - Math.pow(z / 6.0, 2));
+          y += 0.06 * transFactor * zFactor; // Upward convex arch
+        }
 
-      if (k > 0) {
-        const prevL = (k - 1) * 2;
-        const prevR = prevL + 1;
-        const currL = k * 2;
-        const currR = currL + 1;
+        positions.push(x, y, z);
+        uvs.push(u, v);
 
-        indices.push(prevL, prevR, currL);
-        indices.push(prevR, currR, currL);
+        if (k > 0 && c > 0) {
+          const prevRow = (k - 1) * numCols;
+          const currRow = k * numCols;
+          const pL = prevRow + (c - 1);
+          const pR = prevRow + c;
+          const cL = currRow + (c - 1);
+          const cR = currRow + c;
+
+          indices.push(pL, pR, cL);
+          indices.push(pR, cR, cL);
+        }
       }
     }
 
@@ -1336,6 +1480,51 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         rollerMeshRef.current.rotation.x = rollerAngle;
       }
 
+      // Star-Wheel Teeth Dynamic Engagement (纸带开孔处才露出齿状金属，未开孔处不露出)
+      // When a punched hole passes the read line (|step - currentStep| < 0.65), the star wheel engages
+      // and its pointed brass tooth tip pops UP through the hole aperture (+0.14mm above the paper).
+      // On solid unpunched paper, tooth rests flush underneath (y_top <= 3.40 < y_paper 3.64), completely occluded.
+      const swList = starWheelsRef.current;
+      const currentStepVal = currentStepRef.current;
+      const currentHoles = songRef.current ? songRef.current.holes : [];
+
+      if (swList && swList.length === TOTAL_TINES) {
+        for (let i = 0; i < TOTAL_TINES; i++) {
+          const sw = swList[i];
+          if (!sw) continue;
+
+          // Find closest punched hole in track i within engagement range
+          let minDiff = 999;
+          for (let hIdx = 0; hIdx < currentHoles.length; hIdx++) {
+            const h = currentHoles[hIdx];
+            if (h.tineIndex === i) {
+              const diff = h.step - currentStepVal;
+              if (Math.abs(diff) < Math.abs(minDiff)) {
+                minDiff = diff;
+              }
+            }
+          }
+
+          if (Math.abs(minDiff) <= 0.65) {
+            // Hole is present at the reading aperture: tooth engages and pops up into the hole!
+            const pop = Math.max(0, 1.0 - Math.pow(minDiff / 0.65, 2));
+            const targetY = 1.85 + pop * 0.55; // Tooth apex rises to 2.40 + 2.10 = 4.50mm (+0.14mm into the punched hole)
+            const dz = minDiff * 5.0; // mm offset along Z
+            const targetRot = (currentStepVal * 0.41667) + (dz / 2.10);
+
+            sw.position.y += (targetY - sw.position.y) * 0.35;
+            sw.rotation.x = targetRot;
+          } else {
+            // No hole: tooth rests safely beneath the paper (y_top <= 3.95 < y_paper_arch 4.36)
+            const targetY = 1.85;
+            const targetRot = currentStepVal * 0.41667;
+
+            sw.position.y += (targetY - sw.position.y) * 0.35;
+            sw.rotation.x = targetRot;
+          }
+        }
+      }
+
       // Smooth Camera Glide Interpolation (Silky smooth cinematic response)
       const camLerp = 0.085;
       currentCameraPhi.current += (targetCameraPhi.current - currentCameraPhi.current) * camLerp;
@@ -1420,9 +1609,6 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     if (isPanning.current) {
       panCamera(dx, dy);
     } else if (isOrbiting.current) {
-      // Intuitive orbit rotation matching human expectation and OrbitControls:
-      // Dragging right rotates music box to the right (theta decreases)
-      // Dragging up views from higher elevation/top (phi decreases towards zenith)
       targetCameraTheta.current -= dx * 0.006;
       targetCameraPhi.current = Math.max(0.10, Math.min(Math.PI / 2 - 0.02, targetCameraPhi.current - dy * 0.006));
     }
@@ -1526,101 +1712,119 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
       {/* 1. Floating Camera Angle Bar (Top-Left) */}
       <div 
-        className="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-1.5 p-1 bg-stone-900/90 backdrop-blur-md border border-stone-800 rounded-lg shadow-lg pointer-events-auto"
+        className="absolute top-3 left-3 sm:top-4 sm:left-4 z-20 flex items-center gap-1.5 p-1 bg-stone-900/95 backdrop-blur-md border border-stone-800/90 rounded-xl shadow-xl pointer-events-auto select-none"
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setCameraPreset('photo');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-            activeView === 'photo'
-              ? 'bg-amber-700/80 text-amber-100 shadow-sm'
-              : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/60'
-          }`}
-          title="Matches the uploaded reference photo angle"
-        >
-          <Camera className="w-3.5 h-3.5" />
-          <span>参考原图视角</span>
-        </button>
+        {/* Preset Selector Dropdown */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsViewMenuOpen(!isViewMenuOpen);
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-stone-800 hover:bg-stone-700/90 text-amber-200 border border-amber-800/50 transition-colors whitespace-nowrap cursor-pointer shadow-xs"
+            title="点击切换3D观察视角"
+          >
+            <Camera className="w-3.5 h-3.5 text-amber-400" />
+            <span className="font-semibold">
+              {activeView === 'photo' && '参考原图'}
+              {activeView === 'top' && '俯视纸带'}
+              {activeView === 'gears' && '齿轮特写'}
+              {activeView === 'macro' && '滚轮特写'}
+              {activeView === 'front' && '进纸槽'}
+            </span>
+            <ChevronDown className={`w-3 h-3 text-stone-400 transition-transform ${isViewMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setCameraPreset('macro');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-            activeView === 'macro'
-              ? 'bg-amber-700/80 text-amber-100 shadow-sm'
-              : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/60'
-          }`}
-        >
-          <Disc className="w-3.5 h-3.5" />
-          <span>压纸片与粗滚轮</span>
-        </button>
+          {isViewMenuOpen && (
+            <div className="absolute top-full left-0 mt-1.5 w-40 bg-stone-900/95 backdrop-blur-md border border-stone-700/80 rounded-xl shadow-2xl p-1 z-50 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-150">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCameraPreset('photo');
+                  setIsViewMenuOpen(false);
+                }}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                  activeView === 'photo' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>参考原图视角</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCameraPreset('top');
+                  setIsViewMenuOpen(false);
+                }}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                  activeView === 'top' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>俯视纸带</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCameraPreset('gears');
+                  setIsViewMenuOpen(false);
+                }}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                  activeView === 'gears' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+              >
+                <Cog className="w-3.5 h-3.5" />
+                <span>齿轮传动特写</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCameraPreset('macro');
+                  setIsViewMenuOpen(false);
+                }}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                  activeView === 'macro' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+              >
+                <Disc className="w-3.5 h-3.5" />
+                <span>压纸片与粗滚轮</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCameraPreset('front');
+                  setIsViewMenuOpen(false);
+                }}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                  activeView === 'front' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>前面板进纸槽</span>
+              </button>
+            </div>
+          )}
+        </div>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setCameraPreset('gears');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-            activeView === 'gears'
-              ? 'bg-amber-700/80 text-amber-100 shadow-sm'
-              : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/60'
-          }`}
-        >
-          <Cog className="w-3.5 h-3.5" />
-          <span>齿轮传动特写</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setCameraPreset('top');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-            activeView === 'top'
-              ? 'bg-amber-700/80 text-amber-100 shadow-sm'
-              : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/60'
-          }`}
-        >
-          <Eye className="w-3.5 h-3.5" />
-          <span>俯视纸带</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setCameraPreset('front');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-            activeView === 'front'
-              ? 'bg-amber-700/80 text-amber-100 shadow-sm'
-              : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/60'
-          }`}
-        >
-          <span>前面板进纸槽</span>
-        </button>
-
-        <div className="w-[1px] h-4 bg-stone-800 mx-0.5" />
+        <div className="w-[1px] h-4 bg-stone-800 mx-0.5 shrink-0" />
 
         {/* View Mode Toggle: Orbit vs Pan */}
-        <div className="flex items-center bg-stone-950/80 p-0.5 rounded-md border border-stone-800/80">
+        <div className="flex items-center bg-stone-950/80 p-0.5 rounded-lg border border-stone-800/80 shrink-0">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               setNavMode('orbit');
             }}
-            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded transition-colors cursor-pointer ${
+            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
               navMode === 'orbit'
                 ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
                 : 'text-stone-400 hover:text-stone-200'
@@ -1636,7 +1840,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
               e.stopPropagation();
               setNavMode('pan');
             }}
-            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded transition-colors cursor-pointer ${
+            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
               navMode === 'pan'
                 ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
                 : 'text-stone-400 hover:text-stone-200'
@@ -1655,7 +1859,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
             targetCameraTarget.current.set(4, 2, 2);
             setCameraPreset('photo');
           }}
-          className="flex items-center gap-1 px-2 py-1 text-xs text-stone-400 hover:text-stone-200 hover:bg-stone-800/60 rounded-md transition-colors cursor-pointer"
+          className="flex items-center gap-1 px-2 py-1 text-xs text-stone-400 hover:text-stone-200 hover:bg-stone-800/60 rounded-md transition-colors cursor-pointer shrink-0"
           title="复位视角和居中位置"
         >
           <span>复位</span>
@@ -1894,12 +2098,6 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
             <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
           </button>
         )}
-      </div>
-
-      {/* 3. Navigation Operation Hint Badge (Bottom-Left) */}
-      <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-2 px-3 py-1.5 bg-stone-900/80 backdrop-blur-md border border-stone-800/80 rounded-lg text-xs text-stone-300 shadow-md">
-        <span className="text-amber-400 font-medium">💡 视角操作：</span>
-        <span>左键旋转 · 右键 / 中键 / Shift拖拽平移 · 滚轮缩放</span>
       </div>
     </div>
   );

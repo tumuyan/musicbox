@@ -18,7 +18,7 @@ import { TransportControls } from './components/TransportControls';
 import { ReferenceModal } from './components/ReferenceModal';
 import { musicBoxSynth } from './audio/MusicBoxSynth';
 import { generatePrintablePaperStripSVG } from './utils/paperExport';
-import { Box, Layers, Music2, Download } from 'lucide-react';
+import { Box, Layers, Music2, Download, HelpCircle } from 'lucide-react';
 
 export default function App() {
   const [currentSong, setCurrentSong] = useState<SongData>(PRESET_SONGS[0]); // Default: Castle in the Sky
@@ -166,67 +166,82 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-stone-950 text-stone-100 font-sans">
       {/* 1. TOP BAR CONTRACT */}
-      <header className="flex items-center justify-between gap-8 px-6 py-3.5 border-b border-stone-800 bg-[#121110] shrink-0 z-30">
-        {/* Zone 1: Brand Wordmark */}
-        <div className="flex items-center gap-3 whitespace-nowrap shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-800 to-amber-600 flex items-center justify-center text-amber-100 shadow-md border border-amber-600/40">
-            <Music2 className="w-4 h-4" />
+      <header className="flex items-center justify-between gap-2 sm:gap-6 px-3 sm:px-6 py-2.5 sm:py-3.5 border-b border-stone-800 bg-[#121110] shrink-0 z-30">
+        {/* Zone 1: Brand Wordmark & Help Button */}
+        <div className="flex items-center gap-2 sm:gap-3 whitespace-nowrap shrink-0">
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-tr from-amber-800 to-amber-600 flex items-center justify-center text-amber-100 shadow-md border border-amber-600/40 shrink-0">
+            <Music2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </div>
-          <div>
-            <h1 className="text-base font-bold tracking-tight text-amber-100 font-serif">
-              纸带八音盒播放器
+          <div className="flex items-center gap-2">
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-amber-100 font-serif">
+              纸带八音盒<span className="hidden xs:inline">播放器</span>
             </h1>
+            <button
+              onClick={() => setIsRefModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-medium text-amber-300 hover:text-amber-100 bg-amber-950/60 hover:bg-amber-900/80 border border-amber-700/60 hover:border-amber-500 rounded-lg transition-colors cursor-pointer shadow-xs ml-0.5 sm:ml-1"
+              title="查看帮助、视角操作与原图结构对照"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+              <span>帮助</span>
+            </button>
           </div>
         </div>
 
         {/* Zone 2: Viewport Mode Tabs */}
-        <nav className="flex items-center gap-1.5 p-1 bg-stone-900 border border-stone-800/80 rounded-xl">
+        <nav className="flex items-center gap-1 p-0.5 sm:p-1 bg-stone-900 border border-stone-800/80 rounded-xl shrink-0">
           <button
             onClick={() => setViewMode('split')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
               viewMode === 'split'
                 ? 'bg-amber-700/80 text-amber-100 shadow-sm'
                 : 'text-stone-400 hover:text-stone-200'
             }`}
+            title="联动分屏观察 (3D机芯 + 2D纸带)"
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>联动视角</span>
+            <span className="hidden sm:inline">联动视角</span>
+            <span className="sm:hidden">联动</span>
           </button>
 
           <button
             onClick={() => setViewMode('3d')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
               viewMode === '3d'
                 ? 'bg-amber-700/80 text-amber-100 shadow-sm'
                 : 'text-stone-400 hover:text-stone-200'
             }`}
+            title="全屏3D精细机械八音盒"
           >
             <Box className="w-3.5 h-3.5" />
-            <span>3D八音盒</span>
+            <span className="hidden sm:inline">3D八音盒</span>
+            <span className="sm:hidden">3D</span>
           </button>
 
           <button
             onClick={() => setViewMode('strip')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
               viewMode === 'strip'
                 ? 'bg-amber-700/80 text-amber-100 shadow-sm'
                 : 'text-stone-400 hover:text-stone-200'
             }`}
+            title="全屏纸带打孔工作台"
           >
             <Music2 className="w-3.5 h-3.5" />
-            <span>打孔纸带台</span>
+            <span className="hidden sm:inline">打孔纸带台</span>
+            <span className="sm:hidden">纸带</span>
           </button>
         </nav>
 
         {/* Zone 3: Primary Action - Download Printable SVG */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleDownloadSVG}
-            className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 bg-stone-800 hover:bg-stone-700 hover:text-amber-300 text-stone-200 border border-stone-700/80 cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 bg-stone-800 hover:bg-stone-700 hover:text-amber-300 text-stone-200 border border-stone-700/80 cursor-pointer shadow-sm"
             title="下载可直接打印在标准卡纸上的1:1矢量纸带 (70mm标准宽)"
           >
             <Download className="w-3.5 h-3.5 text-amber-500" />
-            <span>导出打印纸带 (SVG)</span>
+            <span className="hidden md:inline">导出打印纸带 (SVG)</span>
+            <span className="md:hidden">导出SVG</span>
           </button>
         </div>
       </header>

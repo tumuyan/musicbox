@@ -667,141 +667,275 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-[#1A1918] border-t border-stone-800 text-stone-200">
-      {/* Ribbon Control Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-stone-900 border-b border-stone-800 text-xs">
-        {/* Left: Punch Mode & Quick Tools */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-stone-800 p-0.5 rounded-lg border border-stone-700/60">
+      {/* Ribbon Control Toolbar: Clean, fully visible, non-scrolling layout */}
+      <div className="bg-stone-900 border-b border-stone-800 text-xs px-3 sm:px-4 py-2 select-none">
+        {/* Desktop View (md and up): Balanced single row */}
+        <div className="hidden md:flex items-center justify-between gap-4">
+          {/* Mode Switch & Select All */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center bg-stone-800 p-0.5 rounded-lg border border-stone-700/60">
+              <button
+                onClick={() => setSelectedTool('select')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                  selectedTool === 'select'
+                    ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
+                    : 'text-stone-400 hover:text-stone-200'
+                }`}
+                title="选择工具：框选或点击选择音符，可整体移动、移调、删除"
+              >
+                <BoxSelect className="w-3.5 h-3.5" />
+                <span>选择工具</span>
+              </button>
+              <button
+                onClick={() => setSelectedTool('punch')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                  selectedTool === 'punch'
+                    ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
+                    : 'text-stone-400 hover:text-stone-200'
+                }`}
+                title="打孔笔：在格点上打孔"
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>打孔笔</span>
+              </button>
+              <button
+                onClick={() => setSelectedTool('erase')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                  selectedTool === 'erase'
+                    ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
+                    : 'text-stone-400 hover:text-stone-200'
+                }`}
+                title="橡皮擦：擦除已有打孔"
+              >
+                <Eraser className="w-3.5 h-3.5" />
+                <span>橡皮擦</span>
+              </button>
+            </div>
+
             <button
-              onClick={() => setSelectedTool('select')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                selectedTool === 'select'
-                  ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
-                  : 'text-stone-400 hover:text-stone-200'
-              }`}
-              title="选择工具：框选或点击选择音符，可整体移动、移调、删除"
+              onClick={() => {
+                handleSelectAll();
+                setSelectedTool('select');
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-md border border-stone-700/50 transition-colors cursor-pointer"
+              title="全选纸带所有音符 (快捷键: Ctrl+A)"
             >
-              <BoxSelect className="w-3.5 h-3.5" />
-              <span>选择工具</span>
-            </button>
-            <button
-              onClick={() => setSelectedTool('punch')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                selectedTool === 'punch'
-                  ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
-                  : 'text-stone-400 hover:text-stone-200'
-              }`}
-              title="打孔笔：在格点上打孔"
-            >
-              <Scissors className="w-3.5 h-3.5" />
-              <span>打孔笔</span>
-            </button>
-            <button
-              onClick={() => setSelectedTool('erase')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                selectedTool === 'erase'
-                  ? 'bg-amber-600 text-stone-900 shadow-sm font-semibold'
-                  : 'text-stone-400 hover:text-stone-200'
-              }`}
-              title="橡皮擦：擦除已有打孔"
-            >
-              <Eraser className="w-3.5 h-3.5" />
-              <span>橡皮擦</span>
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>全选</span>
             </button>
           </div>
 
-          <button
-            onClick={() => {
-              handleSelectAll();
-              setSelectedTool('select');
-            }}
-            className="flex items-center gap-1 px-2.5 py-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-md border border-stone-700/50 transition-colors cursor-pointer"
-            title="全选纸带所有音符 (快捷键: Ctrl+A)"
-          >
-            <CheckSquare className="w-3.5 h-3.5" />
-            <span>全选</span>
-          </button>
+          {/* Quick Edit (Transpose & Measure Length) */}
+          <div className="flex items-center gap-4 text-stone-400">
+            {/* Transpose */}
+            <div className="flex items-center gap-1.5">
+              <span>移调:</span>
+              <div className="flex items-center bg-stone-800/80 rounded-md border border-stone-700/60 p-0.5">
+                <button
+                  onClick={() => handleTranspose(-1)}
+                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 hover:text-amber-400 cursor-pointer text-xs"
+                  title="降半音 (-1 Semitone)"
+                >
+                  -1半音
+                </button>
+                <div className="w-[1px] h-3 bg-stone-700 mx-0.5" />
+                <button
+                  onClick={() => handleTranspose(1)}
+                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 hover:text-amber-400 cursor-pointer text-xs"
+                  title="升半音 (+1 Semitone)"
+                >
+                  +1半音
+                </button>
+              </div>
+            </div>
 
-          <span className="text-stone-600">|</span>
+            <span className="text-stone-700">|</span>
 
-          {/* Transpose */}
-          <div className="flex items-center gap-1 text-stone-400">
-            <span>移调:</span>
-            <button
-              onClick={() => handleTranspose(-1)}
-              className="p-1 hover:bg-stone-800 rounded text-stone-300 hover:text-amber-400"
-              title="降半音 (-1 Semitone)"
-            >
-              <Minus className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleTranspose(1)}
-              className="p-1 hover:bg-stone-800 rounded text-stone-300 hover:text-amber-400"
-              title="升半音 (+1 Semitone)"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
+            {/* Measures */}
+            <div className="flex items-center gap-1.5">
+              <span>小节数 ({numMeasures}):</span>
+              <div className="flex items-center bg-stone-800/80 rounded-md border border-stone-700/60 p-0.5">
+                <button
+                  onClick={() => handleAddMeasures(-2)}
+                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 cursor-pointer"
+                  title="减少2个小节"
+                >
+                  -2
+                </button>
+                <div className="w-[1px] h-3 bg-stone-700 mx-0.5" />
+                <button
+                  onClick={() => handleAddMeasures(2)}
+                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 cursor-pointer"
+                  title="增加2个小节"
+                >
+                  +2
+                </button>
+              </div>
+            </div>
           </div>
 
-          <span className="text-stone-600">|</span>
+          {/* Zoom & Tape Actions */}
+          <div className="flex items-center gap-3 shrink-0">
+            {/* Zoom */}
+            <div className="flex items-center gap-1 bg-stone-800 px-1 py-0.5 rounded-lg border border-stone-700/60">
+              <button
+                onClick={() => setZoom(z => Math.max(10, z - 2))}
+                className="p-1 text-stone-400 hover:text-stone-200 cursor-pointer"
+                title="缩小纸带"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <span className="px-1.5 text-xs text-stone-400 tabular-nums">{zoom}px</span>
+              <button
+                onClick={() => setZoom(z => Math.min(36, z + 2))}
+                className="p-1 text-stone-400 hover:text-stone-200 cursor-pointer"
+                title="放大纸带"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
-          {/* Measure Length */}
-          <div className="flex items-center gap-1 text-stone-400">
-            <span>小节数 ({numMeasures}):</span>
             <button
-              onClick={() => handleAddMeasures(-2)}
-              className="px-1.5 py-0.5 hover:bg-stone-800 rounded text-stone-300"
-              title="减少2个小节"
+              onClick={handleDownloadSVG}
+              className="flex items-center gap-1.5 px-3 py-1 bg-stone-800 hover:bg-amber-950/60 hover:text-amber-300 border border-stone-700 hover:border-amber-700/60 rounded-lg text-stone-300 transition-colors whitespace-nowrap cursor-pointer"
+              title="下载1:1标准70mm宽矢量纸带"
             >
-              -2
+              <Download className="w-3.5 h-3.5 text-amber-500" />
+              <span>导出打印纸带 (SVG)</span>
             </button>
+
             <button
-              onClick={() => handleAddMeasures(2)}
-              className="px-1.5 py-0.5 hover:bg-stone-800 rounded text-stone-300"
-              title="增加2个小节"
+              onClick={handleClearTape}
+              className="p-1.5 text-stone-500 hover:text-red-400 hover:bg-stone-800 rounded-lg transition-colors cursor-pointer"
+              title="清空纸带所有打孔"
             >
-              +2
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
-        {/* Right: Zoom & Export Printable Tape */}
-        <div className="flex items-center gap-3">
-          {/* Zoom buttons */}
-          <div className="flex items-center gap-1 bg-stone-800 px-1 py-0.5 rounded-lg border border-stone-700/60">
-            <button
-              onClick={() => setZoom(z => Math.max(10, z - 2))}
-              className="p-1 text-stone-400 hover:text-stone-200"
-              title="缩小纸带"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            <span className="px-1 text-[11px] text-stone-400 tabular-nums">{zoom}px</span>
-            <button
-              onClick={() => setZoom(z => Math.min(36, z + 2))}
-              className="p-1 text-stone-400 hover:text-stone-200"
-              title="放大纸带"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
+        {/* Mobile View (< md): Clean non-scrolling 2-row layout */}
+        <div className="flex md:hidden flex-col gap-2">
+          {/* Mobile Row 1: Tools & Primary Actions */}
+          <div className="flex items-center justify-between gap-1.5">
+            {/* Mode Switcher */}
+            <div className="flex items-center bg-stone-800 p-0.5 rounded-lg border border-stone-700/60 shrink-0">
+              <button
+                onClick={() => setSelectedTool('select')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium text-xs transition-colors cursor-pointer ${
+                  selectedTool === 'select'
+                    ? 'bg-amber-600 text-stone-950 font-semibold'
+                    : 'text-stone-400 hover:text-stone-200'
+                }`}
+              >
+                <BoxSelect className="w-3.5 h-3.5" />
+                <span>选择</span>
+              </button>
+              <button
+                onClick={() => setSelectedTool('punch')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium text-xs transition-colors cursor-pointer ${
+                  selectedTool === 'punch'
+                    ? 'bg-amber-600 text-stone-950 font-semibold'
+                    : 'text-stone-400 hover:text-stone-200'
+                }`}
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>打孔</span>
+              </button>
+              <button
+                onClick={() => setSelectedTool('erase')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium text-xs transition-colors cursor-pointer ${
+                  selectedTool === 'erase'
+                    ? 'bg-amber-600 text-stone-950 font-semibold'
+                    : 'text-stone-400 hover:text-stone-200'
+                }`}
+              >
+                <Eraser className="w-3.5 h-3.5" />
+                <span>橡皮</span>
+              </button>
+            </div>
+
+            {/* Quick Actions Right */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => {
+                  handleSelectAll();
+                  setSelectedTool('select');
+                }}
+                className="px-2 py-1 text-xs text-stone-400 hover:text-stone-200 bg-stone-800/80 rounded-md border border-stone-700/50 cursor-pointer"
+              >
+                全选
+              </button>
+              <button
+                onClick={handleDownloadSVG}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-amber-300 rounded-md border border-stone-700 cursor-pointer"
+              >
+                <Download className="w-3 h-3 text-amber-400" />
+                <span>导出SVG</span>
+              </button>
+              <button
+                onClick={handleClearTape}
+                className="p-1 text-stone-500 hover:text-red-400 bg-stone-800/80 rounded-md border border-stone-700/50 cursor-pointer"
+                title="清空纸带"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <button
-            onClick={handleDownloadSVG}
-            className="flex items-center gap-1.5 px-3 py-1 bg-stone-800 hover:bg-amber-950/60 hover:text-amber-300 border border-stone-700 hover:border-amber-700/60 rounded-lg text-stone-300 transition-colors whitespace-nowrap"
-            title="下载可直接打印在卡纸上的1:1比例矢量纸带 (70mm标准宽)"
-          >
-            <Download className="w-3.5 h-3.5 text-amber-500" />
-            <span>导出打印纸带 (SVG)</span>
-          </button>
+          {/* Mobile Row 2: Secondary Controls (Transpose, Measures, Zoom) */}
+          <div className="flex items-center justify-between gap-1 text-[11px] text-stone-400 pt-1 border-t border-stone-800/60">
+            {/* Transpose */}
+            <div className="flex items-center gap-1">
+              <span>移调:</span>
+              <button
+                onClick={() => handleTranspose(-1)}
+                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+              >
+                -半音
+              </button>
+              <button
+                onClick={() => handleTranspose(1)}
+                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+              >
+                +半音
+              </button>
+            </div>
 
-          <button
-            onClick={handleClearTape}
-            className="p-1.5 text-stone-500 hover:text-red-400 hover:bg-stone-800 rounded-lg transition-colors"
-            title="清空纸带打孔"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+            {/* Measures */}
+            <div className="flex items-center gap-1">
+              <span>小节({numMeasures}):</span>
+              <button
+                onClick={() => handleAddMeasures(-2)}
+                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+              >
+                -2
+              </button>
+              <button
+                onClick={() => handleAddMeasures(2)}
+                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+              >
+                +2
+              </button>
+            </div>
+
+            {/* Zoom */}
+            <div className="flex items-center gap-1 bg-stone-800/80 px-1 py-0.5 rounded border border-stone-700/50">
+              <button
+                onClick={() => setZoom(z => Math.max(10, z - 2))}
+                className="p-0.5 text-stone-400 hover:text-stone-200 cursor-pointer"
+              >
+                <ZoomOut className="w-3 h-3" />
+              </button>
+              <span className="font-mono text-stone-300 text-[10px] tabular-nums">{zoom}px</span>
+              <button
+                onClick={() => setZoom(z => Math.min(36, z + 2))}
+                className="p-0.5 text-stone-400 hover:text-stone-200 cursor-pointer"
+              >
+                <ZoomIn className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -972,114 +1106,203 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
 
         {/* Floating Batch Actions Bar for Selected Notes (整体删除 / 移调 / 移动) */}
         {selectedHoleIds.size > 0 && (
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 px-3 bg-stone-900/95 backdrop-blur-md border border-amber-600/70 rounded-xl shadow-2xl text-xs text-stone-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
-            {/* Badge */}
-            <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-950/80 border border-amber-700/60 rounded-lg text-amber-300 font-medium">
-              <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
-              <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 个音符</span>
+          <div className="absolute bottom-3 sm:bottom-5 left-1/2 -translate-x-1/2 z-50 p-2 sm:p-2 bg-stone-900/95 backdrop-blur-md border border-amber-600/70 rounded-2xl shadow-2xl text-xs text-stone-200 select-none animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {/* Desktop Layout (md and up): Clean single-row floating bar */}
+            <div className="hidden md:flex items-center gap-3">
+              {/* Badge */}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-950/80 border border-amber-700/60 rounded-lg text-amber-300 font-medium shrink-0">
+                <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+                <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 个音符</span>
+              </div>
+
+              <div className="w-[1px] h-4 bg-stone-800" />
+
+              {/* Batch Move in Time */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-stone-400 font-medium">移动:</span>
+                <button
+                  onClick={() => handleMoveSelected(-1)}
+                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                  title="向左移动 1 步 (快捷键: ←)"
+                >
+                  <ArrowLeft className="w-3 h-3" />
+                  <span>1步</span>
+                </button>
+                <button
+                  onClick={() => handleMoveSelected(1)}
+                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                  title="向右移动 1 步 (快捷键: →)"
+                >
+                  <span>1步</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={() => handleMoveSelected(-4)}
+                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
+                  title="向左移动 1 拍 (4步) (快捷键: Shift+←)"
+                >
+                  -1拍
+                </button>
+                <button
+                  onClick={() => handleMoveSelected(4)}
+                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
+                  title="向右移动 1 拍 (4步) (快捷键: Shift+→)"
+                >
+                  +1拍
+                </button>
+              </div>
+
+              <div className="w-[1px] h-4 bg-stone-800" />
+
+              {/* Batch Transpose Pitch */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-stone-400 font-medium">移调:</span>
+                <button
+                  onClick={() => handleTransposeTines(1)}
+                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                  title="音高上移 1 音齿 (快捷键: ↑)"
+                >
+                  <ArrowUp className="w-3 h-3 text-amber-400" />
+                  <span>升齿</span>
+                </button>
+                <button
+                  onClick={() => handleTransposeTines(-1)}
+                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
+                  title="音高下移 1 音齿 (快捷键: ↓)"
+                >
+                  <ArrowDown className="w-3 h-3 text-amber-400" />
+                  <span>降齿</span>
+                </button>
+                <button
+                  onClick={() => handleTransposeSemitones(1)}
+                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
+                  title="升半音 (+1 Semitone)"
+                >
+                  +1半音
+                </button>
+                <button
+                  onClick={() => handleTransposeSemitones(-1)}
+                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
+                  title="降半音 (-1 Semitone)"
+                >
+                  -1半音
+                </button>
+              </div>
+
+              <div className="w-[1px] h-4 bg-stone-800" />
+
+              {/* Actions */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleDuplicateSelected}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-300 hover:text-stone-100 transition-all cursor-pointer"
+                  title="复制选中的音符 (向后偏移1拍)"
+                >
+                  <Copy className="w-3.5 h-3.5 text-blue-400" />
+                  <span>复制</span>
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-red-950/70 hover:bg-red-900 border border-red-700/60 active:scale-95 rounded text-red-200 hover:text-red-100 transition-all cursor-pointer"
+                  title="删除选中的音符 (快捷键: Delete / Backspace)"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                  <span>删除</span>
+                </button>
+                <button
+                  onClick={handleClearSelection}
+                  className="p-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded transition-colors ml-0.5 cursor-pointer"
+                  title="取消选择 (快捷键: Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            <div className="w-[1px] h-5 bg-stone-800 mx-0.5" />
+            {/* Mobile Layout (< md): Non-scrolling 2-row compact card */}
+            <div className="flex md:hidden flex-col gap-2 w-[310px] text-xs">
+              {/* Row 1: Badge + Actions */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-amber-950/80 border border-amber-700/60 rounded-md text-amber-300 font-medium">
+                  <CheckSquare className="w-3 h-3 text-amber-400" />
+                  <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 音符</span>
+                </div>
 
-            {/* Batch Move in Time */}
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] text-stone-400 font-medium ml-1">移动:</span>
-              <button
-                onClick={() => handleMoveSelected(-1)}
-                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                title="向左移动 1 步 (快捷键: ←)"
-              >
-                <ArrowLeft className="w-3 h-3" />
-                <span>1步</span>
-              </button>
-              <button
-                onClick={() => handleMoveSelected(1)}
-                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                title="向右移动 1 步 (快捷键: →)"
-              >
-                <span>1步</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-              <button
-                onClick={() => handleMoveSelected(-4)}
-                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
-                title="向左移动 1 拍 (4步) (快捷键: Shift+←)"
-              >
-                -1拍
-              </button>
-              <button
-                onClick={() => handleMoveSelected(4)}
-                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
-                title="向右移动 1 拍 (4步) (快捷键: Shift+→)"
-              >
-                +1拍
-              </button>
-            </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handleDuplicateSelected}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 transition-all cursor-pointer text-[11px]"
+                    title="复制音符"
+                  >
+                    <Copy className="w-3 h-3 text-blue-400" />
+                    <span>复制</span>
+                  </button>
+                  <button
+                    onClick={handleDeleteSelected}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-red-950/80 hover:bg-red-900 border border-red-700/60 active:scale-95 rounded text-red-200 transition-all cursor-pointer text-[11px]"
+                    title="删除音符"
+                  >
+                    <Trash2 className="w-3 h-3 text-red-400" />
+                    <span>删除</span>
+                  </button>
+                  <button
+                    onClick={handleClearSelection}
+                    className="p-0.5 text-stone-400 hover:text-stone-200 bg-stone-800/80 rounded cursor-pointer ml-0.5"
+                    title="取消选择"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
 
-            <div className="w-[1px] h-5 bg-stone-800 mx-0.5" />
+              {/* Row 2: Move & Transpose Steppers */}
+              <div className="flex items-center justify-between gap-1 pt-1.5 border-t border-stone-800/80 text-[11px]">
+                {/* Move in time */}
+                <div className="flex items-center gap-1">
+                  <span className="text-stone-400">移:</span>
+                  <button
+                    onClick={() => handleMoveSelected(-1)}
+                    className="px-1.5 py-0.5 bg-stone-800 rounded text-stone-200 cursor-pointer active:scale-95"
+                  >
+                    ◀ 1步
+                  </button>
+                  <button
+                    onClick={() => handleMoveSelected(1)}
+                    className="px-1.5 py-0.5 bg-stone-800 rounded text-stone-200 cursor-pointer active:scale-95"
+                  >
+                    1步 ▶
+                  </button>
+                </div>
 
-            {/* Batch Transpose Pitch */}
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] text-stone-400 font-medium ml-1">移调:</span>
-              <button
-                onClick={() => handleTransposeTines(1)}
-                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                title="音高上移 1 音齿 (快捷键: ↑)"
-              >
-                <ArrowUp className="w-3 h-3 text-amber-400" />
-                <span>升齿</span>
-              </button>
-              <button
-                onClick={() => handleTransposeTines(-1)}
-                className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                title="音高下移 1 音齿 (快捷键: ↓)"
-              >
-                <ArrowDown className="w-3 h-3 text-amber-400" />
-                <span>降齿</span>
-              </button>
-              <button
-                onClick={() => handleTransposeSemitones(1)}
-                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
-                title="升半音 (+1 Semitone)"
-              >
-                +1半音
-              </button>
-              <button
-                onClick={() => handleTransposeSemitones(-1)}
-                className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
-                title="降半音 (-1 Semitone)"
-              >
-                -1半音
-              </button>
-            </div>
-
-            <div className="w-[1px] h-5 bg-stone-800 mx-0.5" />
-
-            {/* Duplicate, Delete, Cancel */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={handleDuplicateSelected}
-                className="flex items-center gap-1 px-2.5 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-300 hover:text-stone-100 transition-all cursor-pointer"
-                title="复制选中的音符 (向后偏移1拍)"
-              >
-                <Copy className="w-3 h-3 text-blue-400" />
-                <span>复制</span>
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                className="flex items-center gap-1 px-2.5 py-1 bg-red-950/70 hover:bg-red-900 border border-red-700/60 active:scale-95 rounded text-red-200 hover:text-red-100 transition-all cursor-pointer"
-                title="删除选中的音符 (快捷键: Delete / Backspace)"
-              >
-                <Trash2 className="w-3 h-3 text-red-400" />
-                <span>删除</span>
-              </button>
-              <button
-                onClick={handleClearSelection}
-                className="p-1 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded transition-colors ml-1 cursor-pointer"
-                title="取消选择 (快捷键: Esc)"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+                {/* Transpose */}
+                <div className="flex items-center gap-1">
+                  <span className="text-stone-400">调:</span>
+                  <button
+                    onClick={() => handleTransposeTines(1)}
+                    className="px-1.5 py-0.5 bg-stone-800 rounded text-amber-300 cursor-pointer active:scale-95"
+                  >
+                    ▲升齿
+                  </button>
+                  <button
+                    onClick={() => handleTransposeTines(-1)}
+                    className="px-1.5 py-0.5 bg-stone-800 rounded text-amber-300 cursor-pointer active:scale-95"
+                  >
+                    ▼降齿
+                  </button>
+                  <button
+                    onClick={() => handleTransposeSemitones(1)}
+                    className="px-1 py-0.5 bg-stone-800/80 rounded text-stone-300 cursor-pointer active:scale-95"
+                  >
+                    +半
+                  </button>
+                  <button
+                    onClick={() => handleTransposeSemitones(-1)}
+                    className="px-1 py-0.5 bg-stone-800/80 rounded text-stone-300 cursor-pointer active:scale-95"
+                  >
+                    -半
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
