@@ -218,13 +218,16 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const endStep = currentStep + (CANVAS_W - READ_HEAD_X) / STEP_WIDTH_PX;
     const minStep = Math.floor(startStep) - 2;
     const maxStep = Math.ceil(endStep) + 2;
+    const stepsPerMeasure = song.timeSignature
+      ? (song.timeSignature[1] === 8 ? Math.max(2, song.timeSignature[0] * 2) : Math.max(4, song.timeSignature[0] * 4))
+      : 16;
 
     // Vertical Measure & Beat Grid Lines
     for (let s = minStep; s <= maxStep; s++) {
       const x = READ_HEAD_X + (s - currentStep) * STEP_WIDTH_PX;
       if (x < -20 || x > CANVAS_W + 20) continue;
 
-      const isMeasure = s >= 0 && s % TILE_STEPS === 0;
+      const isMeasure = s >= 0 && s % stepsPerMeasure === 0;
       const isBeat = s >= 0 && s % 4 === 0;
 
       if (isMeasure) {
@@ -235,7 +238,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 5);
         ctx.stroke();
 
-        const m = Math.floor(s / TILE_STEPS);
+        const m = Math.floor(s / stepsPerMeasure);
         ctx.fillStyle = '#7C6C58';
         ctx.font = 'bold 11px monospace';
         ctx.fillText(`M${m + 1}`, x + 4, TOP_MARGIN - 7);
@@ -313,7 +316,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     ctx.setLineDash([]);
 
     texture.needsUpdate = true;
-  }, [currentStep, song.holes]);
+  }, [currentStep, song.holes, song.timeSignature]);
 
   // Procedural Walnut Wood Texture Generator
   const createWalnutTexture = useCallback((): THREE.CanvasTexture => {

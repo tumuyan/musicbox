@@ -11,6 +11,12 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { SongData, PunchHole, MUSIC_BOX_SCALE, TOTAL_TINES } from '../types/musicBox';
 import { musicBoxSynth } from '../audio/MusicBoxSynth';
 import {
+  getStepsPerMeasure,
+  getTotalMeasures,
+  autoAlignSongByBpm,
+  snapHolesToGrid,
+} from '../utils/bpmAlign';
+import {
   ZoomIn,
   ZoomOut,
   Trash2,
@@ -27,7 +33,10 @@ import {
   Eraser,
   CheckSquare,
   X,
-  Copy
+  Copy,
+  Sparkles,
+  Wand2,
+  RefreshCcw,
 } from 'lucide-react';
 import { generatePrintablePaperStripSVG } from '../utils/paperExport';
 
@@ -46,6 +55,8 @@ interface PaperMatrixProps {
   zoom: number;
   rowHeight: number;
   gridHeight: number;
+  gridOriginX: number;
+  gridGranularity: 'auto' | '1/8' | '1/16' | '1/4';
   holeSet: Set<string>;
   selectedHoleKeySet: Set<string>;
   selectedTool: 'punch' | 'erase' | 'select';
@@ -54,12 +65,15 @@ interface PaperMatrixProps {
 }
 
 // Memoized Pitch Grid & Punched Holes: Isolates 3,840+ cells from 60fps playback re-renders!
+// All holes are aligned precisely on the crosshair intersection of horizontal pitch lines and vertical step lines.
 const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
   totalSteps,
   stepsPerMeasure,
   zoom,
   rowHeight,
   gridHeight,
+  gridOriginX,
+  gridGranularity,
   holeSet,
   selectedHoleKeySet,
   selectedTool,
@@ -91,24 +105,37 @@ const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
       {Array.from({ length: totalSteps + 1 }).map((_, step) => {
         const isMeasure = step % stepsPerMeasure === 0;
         const isBeat = step % 4 === 0;
-        const leftPos = step * zoom;
+        const isEighth = step % 2 === 0;
+        const leftPos = gridOriginX + step * zoom;
+
+        // Granularity filtering: prevents intense barcode-like visual clutter
+        const showSixteenth = gridGranularity === '1/16' || (gridGranularity === 'auto' && zoom >= 22);
+        const showEighth = gridGranularity !== '1/4';
+
+        if (!isMeasure && !isBeat) {
+          if (isEighth && !showEighth) return null;
+          if (!isEighth && !showSixteenth) return null;
+        }
 
         return (
           <div
             key={`step-line-${step}`}
             className={`absolute top-0 bottom-0 pointer-events-none ${
               isMeasure
-                ? 'border-l-2 border-[#B8AC98]'
+                ? 'border-l-2 border-[#8E7E6B]'
                 : isBeat
-                ? 'border-l border-[#D6CDBC]'
-                : 'border-l border-[#EDE7DB]'
+                ? 'border-l border-[#B8AA94]'
+                : isEighth
+                ? 'border-l border-dashed border-[#D2C8B8]'
+                : 'border-l border-dotted border-[#E5DECD] opacity-40'
             }`}
             style={{ left: leftPos }}
           />
         );
       })}
 
-      {/* Clickable Matrix Cells for Punching Circular Holes */}
+      {/* Clickable Matrix Cells for Punching Circular Holes:
+          Row flex starts at gridOriginX - zoom / 2, so cell centers align with gridOriginX + step * zoom! */}
       {Array.from({ length: TOTAL_TINES }).map((_, rowIdx) => {
         const tineIndex = TOTAL_TINES - 1 - rowIdx;
         const topPos = rowIdx * rowHeight;
@@ -116,8 +143,8 @@ const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
         return (
           <div
             key={`row-${tineIndex}`}
-            className="absolute left-0 w-full flex"
-            style={{ top: topPos, height: rowHeight }}
+            className="absolute flex"
+            style={{ left: gridOriginX - zoom / 2, top: topPos, height: rowHeight }}
           >
             {Array.from({ length: totalSteps }).map((_, step) => {
               const cellKey = `${step}-${tineIndex}`;
@@ -146,9 +173,9 @@ const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
                       : 'cursor-pointer'
                   }`}
                   style={{ width: zoom }}
-                  title={`${MUSIC_BOX_SCALE[tineIndex].name} (Step ${step})${isSelected ? ' [已选]' : ''}`}
+                  title={`${MUSIC_BOX_SCALE[tineIndex].name} (第 ${step} 步 · 小节 ${Math.floor(step / stepsPerMeasure) + 1})${isSelected ? ' [已选]' : ''}`}
                 >
-                  {/* Circular Punched Hole: with golden glow when selected */}
+                  {/* Circular Punched Hole: precisely centered on intersection of pitch line and step line */}
                   {hasHole ? (
                     <div className={`relative rounded-full flex items-center justify-center transform transition-all ${
                       isSelected
@@ -192,13 +219,15 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
   const [selectedHoleIds, setSelectedHoleIds] = useState<Set<string>>(new Set());
   const [marqueeBox, setMarqueeBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
   const [isMarqueeSelecting, setIsMarqueeSelecting] = useState(false);
+  const [gridGranularity, setGridGranularity] = useState<'auto' | '1/8' | '1/16' | '1/4'>('auto');
 
   // Auto-scroll with playback playhead smoothly without jitter or back-and-forth shaking
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || isMouseDown) return;
 
-    const playheadX = currentStep * zoom;
+    const gridOriginX = 28;
+    const playheadX = gridOriginX + currentStep * zoom;
     const containerW = container.clientWidth;
     const scrollLeft = container.scrollLeft;
 
@@ -305,7 +334,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
 
     let newTotalSteps = song.totalSteps;
     if (maxStep + actualDelta >= song.totalSteps) {
-      const stepsPerMeasure = song.timeSignature[0] * 4;
+      const stepsPerMeasure = getStepsPerMeasure(song.timeSignature);
       newTotalSteps = Math.ceil((maxStep + actualDelta + 8) / stepsPerMeasure) * stepsPerMeasure;
     }
 
@@ -462,6 +491,17 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
     setSelectedHoleIds(new Set(song.holes.map(h => h.id)));
   }, [song.holes]);
 
+  // Invert Selection (反选)
+  const handleInvertSelection = useCallback(() => {
+    const inverted = new Set<string>();
+    song.holes.forEach(h => {
+      if (!selectedHoleIds.has(h.id)) {
+        inverted.add(h.id);
+      }
+    });
+    setSelectedHoleIds(inverted);
+  }, [song.holes, selectedHoleIds]);
+
   // Clear Selection (取消选择)
   const handleClearSelection = useCallback(() => {
     setSelectedHoleIds(new Set());
@@ -518,13 +558,63 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
     }
   };
 
-  // Add measures
+  // Add or subtract measures
   const handleAddMeasures = (delta: number) => {
-    const stepsPerMeasure = song.timeSignature[0] * 4;
-    const newSteps = Math.max(32, song.totalSteps + delta * stepsPerMeasure);
+    const stepsPerMeasure = getStepsPerMeasure(song.timeSignature);
+    const currentMeasures = getTotalMeasures(song.totalSteps, stepsPerMeasure);
+    const newMeasures = Math.max(2, currentMeasures + delta);
     onSongChange({
       ...song,
-      totalSteps: newSteps,
+      totalSteps: newMeasures * stepsPerMeasure,
+    });
+  };
+
+  // Set beats per measure (每小节几拍, 如 2, 3, 4, 6 拍)
+  const handleSetBeatsPerMeasure = (newBeats: number) => {
+    const beats = Math.max(1, Math.min(16, Math.round(newBeats)));
+    const denom = song.timeSignature ? song.timeSignature[1] : 4;
+    const oldStepsPerMeasure = getStepsPerMeasure(song.timeSignature);
+    const currentMeasures = getTotalMeasures(song.totalSteps, oldStepsPerMeasure);
+    const newStepsPerMeasure = denom === 8 ? beats * 2 : beats * 4;
+    onSongChange({
+      ...song,
+      timeSignature: [beats, denom],
+      totalSteps: currentMeasures * newStepsPerMeasure,
+    });
+  };
+
+  // Set total measures directly (一共多少节)
+  const handleSetTotalMeasures = (newMeasures: number) => {
+    const measures = Math.max(2, Math.min(256, Math.round(newMeasures)));
+    const stepsPerMeasure = getStepsPerMeasure(song.timeSignature);
+    onSongChange({
+      ...song,
+      totalSteps: measures * stepsPerMeasure,
+    });
+  };
+
+  // Auto-align holes and grid lines via BPM (默认通过调节BPM自动对齐孔和格线)
+  const [alignToast, setAlignToast] = useState<string | null>(null);
+
+  const handleAutoAlignBpm = () => {
+    const alignedSong = autoAlignSongByBpm(song);
+    onSongChange(alignedSong);
+    setAlignToast(`已自动测算并调节 BPM 至 ${alignedSong.bpm}，孔与格线已对齐！`);
+    setTimeout(() => setAlignToast(null), 3500);
+  };
+
+  const handleSnapToGrid = () => {
+    const snappedSong = snapHolesToGrid(song, 1);
+    onSongChange(snappedSong);
+    setAlignToast('所有孔已吸附对齐到最近格线！');
+    setTimeout(() => setAlignToast(null), 3000);
+  };
+
+  const handleBpmChange = (newBpm: number) => {
+    const bpm = Math.max(30, Math.min(240, Math.round(newBpm)));
+    onSongChange({
+      ...song,
+      bpm,
     });
   };
 
@@ -584,10 +674,12 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
   const bottomMarginHeight = 36; // 留白边
   const gridHeight = TOTAL_TINES * rowHeight;
   const totalPaperHeight = topMarginHeight + gridHeight + bottomMarginHeight;
-  const totalPaperWidth = song.totalSteps * zoom + 120; // with lead-out
+  const gridOriginX = 28; // Start offset so step 0 crosshair is not clipped at left edge
+  const totalPaperWidth = gridOriginX + song.totalSteps * zoom + 120; // with lead-out
 
-  const stepsPerMeasure = song.timeSignature[0] * 4;
-  const numMeasures = Math.ceil(song.totalSteps / stepsPerMeasure);
+  const stepsPerMeasure = getStepsPerMeasure(song.timeSignature);
+  const beatsPerMeasure = song.timeSignature ? song.timeSignature[0] : 4;
+  const numMeasures = getTotalMeasures(song.totalSteps, stepsPerMeasure);
 
   // Quick lookup set for holes: `${step}-${tineIndex}` (memoized to avoid rebuilding on playback)
   const holeSet = useMemo(() => new Set(song.holes.map(h => `${h.step}-${h.tineIndex}`)), [song.holes]);
@@ -615,8 +707,11 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const step = Math.floor(x / zoom);
+    const step = Math.round((x - gridOriginX) / zoom);
+    if (step < 0 || step >= song.totalSteps) return;
+
     const rowIdx = Math.floor((y - topMarginHeight) / rowHeight);
+    if (rowIdx < 0 || rowIdx >= TOTAL_TINES) return;
     const tineIndex = TOTAL_TINES - 1 - rowIdx;
 
     const holeAtPos = song.holes.find(h => h.step === step && h.tineIndex === tineIndex);
@@ -649,7 +744,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
 
     const enclosedIds = new Set<string>();
     song.holes.forEach(hole => {
-      const hx = (hole.step + 0.5) * zoom;
+      const hx = gridOriginX + hole.step * zoom;
       const hy = topMarginHeight + (TOTAL_TINES - 1 - hole.tineIndex + 0.5) * rowHeight;
       if (hx >= minX && hx <= maxX && hy >= minY && hy <= maxY) {
         enclosedIds.add(hole.id);
@@ -723,59 +818,94 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               <CheckSquare className="w-3.5 h-3.5" />
               <span>全选</span>
             </button>
+            <button
+              onClick={() => {
+                handleInvertSelection();
+                setSelectedTool('select');
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-stone-400 hover:text-amber-300 hover:bg-stone-800 rounded-md border border-stone-700/50 transition-colors cursor-pointer"
+              title="反向选择未选中的音符"
+            >
+              <RefreshCcw className="w-3.5 h-3.5" />
+              <span>反选</span>
+            </button>
           </div>
 
-          {/* Quick Edit (Transpose & Measure Length) */}
-          <div className="flex items-center gap-4 text-stone-400">
-            {/* Transpose */}
-            <div className="flex items-center gap-1.5">
-              <span>移调:</span>
-              <div className="flex items-center bg-stone-800/80 rounded-md border border-stone-700/60 p-0.5">
+          {/* Quick Edit (Beats/Measure, Total Measures, Grid Granularity) */}
+          <div className="flex items-center gap-2.5 text-stone-300">
+            {/* 1. 每小节几拍 (Beats per Measure) - 下拉选择 */}
+            <div className="flex items-center gap-1.5 bg-stone-800/80 px-2 py-1 rounded-lg border border-stone-700/60 shrink-0">
+              <span className="text-stone-400 text-xs">拍数:</span>
+              <select
+                value={beatsPerMeasure}
+                onChange={(e) => handleSetBeatsPerMeasure(parseInt(e.target.value, 10))}
+                className="bg-stone-900 border border-stone-700/70 hover:border-amber-600/70 text-amber-300 font-mono text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-500 cursor-pointer"
+                title="选择每小节拍数 (如4/4拍、3/4拍等)"
+              >
+                <option value={2}>2 拍 (2/4)</option>
+                <option value={3}>3 拍 (3/4)</option>
+                <option value={4}>4 拍 (4/4)</option>
+                <option value={5}>5 拍 (5/4)</option>
+                <option value={6}>6 拍 (6/8)</option>
+                <option value={8}>8 拍 (8/8)</option>
+              </select>
+            </div>
+
+            {/* 2. 一共多少节 (Total Measures) - 极简紧凑步进胶囊 */}
+            <div className="flex items-center gap-1.5 bg-stone-800/80 px-2 py-1 rounded-lg border border-stone-700/60 shrink-0">
+              <span className="text-stone-400 text-xs">小节:</span>
+              <div className="flex items-center bg-stone-900 border border-stone-700/70 rounded px-1 py-0.5">
                 <button
-                  onClick={() => handleTranspose(-1)}
-                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 hover:text-amber-400 cursor-pointer text-xs"
-                  title="降半音 (-1 Semitone)"
+                  onClick={() => handleAddMeasures(-1)}
+                  className="w-4 h-4 flex items-center justify-center hover:bg-stone-700 rounded text-stone-400 hover:text-stone-200 text-xs cursor-pointer transition-colors"
+                  title="减少1个小节"
                 >
-                  -1半音
+                  -
                 </button>
-                <div className="w-[1px] h-3 bg-stone-700 mx-0.5" />
+                <input
+                  type="number"
+                  min={2}
+                  max={256}
+                  value={numMeasures}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v) && v >= 2 && v <= 256) {
+                      handleSetTotalMeasures(v);
+                    }
+                  }}
+                  className="w-8 text-center bg-transparent font-mono text-amber-200 font-bold text-xs focus:outline-none"
+                  title="输入总小节数 (回车确认)"
+                />
+                <span className="text-stone-500 text-[11px] pr-0.5 select-none">节</span>
                 <button
-                  onClick={() => handleTranspose(1)}
-                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 hover:text-amber-400 cursor-pointer text-xs"
-                  title="升半音 (+1 Semitone)"
+                  onClick={() => handleAddMeasures(1)}
+                  className="w-4 h-4 flex items-center justify-center hover:bg-stone-700 rounded text-stone-400 hover:text-stone-200 text-xs cursor-pointer transition-colors"
+                  title="增加1个小节"
                 >
-                  +1半音
+                  +
                 </button>
               </div>
             </div>
 
-            <span className="text-stone-700">|</span>
-
-            {/* Measures */}
-            <div className="flex items-center gap-1.5">
-              <span>小节数 ({numMeasures}):</span>
-              <div className="flex items-center bg-stone-800/80 rounded-md border border-stone-700/60 p-0.5">
-                <button
-                  onClick={() => handleAddMeasures(-2)}
-                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 cursor-pointer"
-                  title="减少2个小节"
-                >
-                  -2
-                </button>
-                <div className="w-[1px] h-3 bg-stone-700 mx-0.5" />
-                <button
-                  onClick={() => handleAddMeasures(2)}
-                  className="px-1.5 py-0.5 hover:bg-stone-700 rounded text-stone-300 cursor-pointer"
-                  title="增加2个小节"
-                >
-                  +2
-                </button>
-              </div>
+            {/* 3. 格线粒度 (Grid Granularity) - 自适应/清晰/精细/整拍 */}
+            <div className="flex items-center gap-1.5 bg-stone-800/80 px-2 py-1 rounded-lg border border-stone-700/60 shrink-0">
+              <span className="text-stone-400 text-xs">格线:</span>
+              <select
+                value={gridGranularity}
+                onChange={(e) => setGridGranularity(e.target.value as any)}
+                className="bg-stone-900 border border-stone-700/70 hover:border-amber-600/70 text-stone-200 text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-500 cursor-pointer"
+                title="调整纸带时间竖线的分辨率与疏密 (避免密集条形码视觉疲劳)"
+              >
+                <option value="auto">自适应 (推荐)</option>
+                <option value="1/8">1/8 拍 (清晰标准)</option>
+                <option value="1/16">1/16 拍 (精细刻度)</option>
+                <option value="1/4">1/4 拍 (整拍主线)</option>
+              </select>
             </div>
           </div>
 
           {/* Zoom & Tape Actions */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0">
             {/* Zoom */}
             <div className="flex items-center gap-1 bg-stone-800 px-1 py-0.5 rounded-lg border border-stone-700/60">
               <button
@@ -801,7 +931,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               title="下载1:1标准70mm宽矢量纸带"
             >
               <Download className="w-3.5 h-3.5 text-amber-500" />
-              <span>导出打印纸带 (SVG)</span>
+              <span>导出SVG</span>
             </button>
 
             <button
@@ -855,23 +985,34 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               </button>
             </div>
 
-            {/* Quick Actions Right */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            {/* Mobile Actions: All / Invert / Export / Clear */}
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => {
                   handleSelectAll();
                   setSelectedTool('select');
                 }}
-                className="px-2 py-1 text-xs text-stone-400 hover:text-stone-200 bg-stone-800/80 rounded-md border border-stone-700/50 cursor-pointer"
+                className="px-2 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-md border border-stone-700 cursor-pointer"
+                title="全选所有音符"
               >
                 全选
               </button>
               <button
+                onClick={() => {
+                  handleInvertSelection();
+                  setSelectedTool('select');
+                }}
+                className="px-2 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-amber-300 rounded-md border border-stone-700 cursor-pointer"
+                title="反向选择音符"
+              >
+                反选
+              </button>
+              <button
                 onClick={handleDownloadSVG}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-amber-300 rounded-md border border-stone-700 cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-amber-300 rounded-md border border-stone-700 cursor-pointer"
               >
                 <Download className="w-3 h-3 text-amber-400" />
-                <span>导出SVG</span>
+                <span>SVG</span>
               </button>
               <button
                 onClick={handleClearTape}
@@ -883,51 +1024,64 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
             </div>
           </div>
 
-          {/* Mobile Row 2: Secondary Controls (Transpose, Measures, Zoom) */}
-          <div className="flex items-center justify-between gap-1 text-[11px] text-stone-400 pt-1 border-t border-stone-800/60">
-            {/* Transpose */}
-            <div className="flex items-center gap-1">
-              <span>移调:</span>
-              <button
-                onClick={() => handleTranspose(-1)}
-                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+          {/* Mobile Row 2: Secondary Controls (Beats, Measures, Grid, Zoom) */}
+          <div className="flex items-center justify-between gap-1 text-[11px] text-stone-400 pt-1 border-t border-stone-800/60 overflow-x-auto">
+            {/* Beats per measure */}
+            <div className="flex items-center gap-1 shrink-0">
+              <span>拍:</span>
+              <select
+                value={beatsPerMeasure}
+                onChange={(e) => handleSetBeatsPerMeasure(parseInt(e.target.value, 10))}
+                className="bg-stone-800 border border-stone-700 text-amber-300 font-mono text-[10px] rounded px-1 py-0.5 cursor-pointer"
               >
-                -半音
-              </button>
-              <button
-                onClick={() => handleTranspose(1)}
-                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
-              >
-                +半音
-              </button>
+                <option value={2}>2拍</option>
+                <option value={3}>3拍</option>
+                <option value={4}>4拍</option>
+                <option value={6}>6拍</option>
+              </select>
             </div>
 
             {/* Measures */}
-            <div className="flex items-center gap-1">
-              <span>小节({numMeasures}):</span>
+            <div className="flex items-center gap-0.5 shrink-0 bg-stone-800/80 px-1 py-0.5 rounded border border-stone-700/50">
               <button
-                onClick={() => handleAddMeasures(-2)}
-                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+                onClick={() => handleAddMeasures(-1)}
+                className="w-3.5 h-3.5 flex items-center justify-center hover:bg-stone-700 rounded text-stone-300 cursor-pointer"
               >
-                -2
+                -
               </button>
+              <span className="font-mono text-amber-200 font-semibold px-0.5">{numMeasures}节</span>
               <button
-                onClick={() => handleAddMeasures(2)}
-                className="px-1.5 py-0.5 bg-stone-800 rounded hover:bg-stone-700 text-stone-300 cursor-pointer"
+                onClick={() => handleAddMeasures(1)}
+                className="w-3.5 h-3.5 flex items-center justify-center hover:bg-stone-700 rounded text-stone-300 cursor-pointer"
               >
-                +2
+                +
               </button>
             </div>
 
+            {/* Grid Granularity */}
+            <div className="flex items-center gap-1 shrink-0">
+              <span>格线:</span>
+              <select
+                value={gridGranularity}
+                onChange={(e) => setGridGranularity(e.target.value as any)}
+                className="bg-stone-800 border border-stone-700 text-stone-300 text-[10px] rounded px-1 py-0.5 cursor-pointer"
+              >
+                <option value="auto">自适应</option>
+                <option value="1/8">1/8</option>
+                <option value="1/16">1/16</option>
+                <option value="1/4">1/4</option>
+              </select>
+            </div>
+
             {/* Zoom */}
-            <div className="flex items-center gap-1 bg-stone-800/80 px-1 py-0.5 rounded border border-stone-700/50">
+            <div className="flex items-center gap-0.5 bg-stone-800/80 px-1 py-0.5 rounded border border-stone-700/50 shrink-0">
               <button
                 onClick={() => setZoom(z => Math.max(10, z - 2))}
                 className="p-0.5 text-stone-400 hover:text-stone-200 cursor-pointer"
               >
                 <ZoomOut className="w-3 h-3" />
               </button>
-              <span className="font-mono text-stone-300 text-[10px] tabular-nums">{zoom}px</span>
+              <span className="font-mono text-stone-300 text-[10px] tabular-nums">{zoom}</span>
               <button
                 onClick={() => setZoom(z => Math.min(36, z + 2))}
                 className="p-0.5 text-stone-400 hover:text-stone-200 cursor-pointer"
@@ -938,6 +1092,14 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Align Toast Feedback */}
+      {alignToast && (
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-stone-950 font-bold text-xs px-3.5 py-1.5 rounded-lg shadow-2xl border border-amber-300 animate-bounce flex items-center gap-1.5 pointer-events-none">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>{alignToast}</span>
+        </div>
+      )}
 
       {/* Main Paper Ribbon Workspace */}
       <div className="flex flex-1 overflow-hidden relative">
@@ -1031,7 +1193,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               {/* Measure Number Markers along the top margin */}
               {Array.from({ length: numMeasures + 1 }).map((_, mIdx) => {
                 const measureStep = mIdx * stepsPerMeasure;
-                const leftPos = measureStep * zoom;
+                const leftPos = gridOriginX + measureStep * zoom;
                 return (
                   <div
                     key={`measure-${mIdx}`}
@@ -1045,13 +1207,15 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               })}
             </div>
 
-            {/* 2. MIDDLE PITCH & TIME GRID (中间绘制格线) - Memoized PaperMatrix */}
+            {/* 2. MIDDLE PITCH & TIME GRID (中间绘制格线) - Memoized PaperMatrix with exact crosshairs */}
             <PaperMatrix
               totalSteps={song.totalSteps}
               stepsPerMeasure={stepsPerMeasure}
               zoom={zoom}
               rowHeight={rowHeight}
               gridHeight={gridHeight}
+              gridOriginX={gridOriginX}
+              gridGranularity={gridGranularity}
               holeSet={holeSet}
               selectedHoleKeySet={selectedHoleKeySet}
               selectedTool={selectedTool}
@@ -1081,20 +1245,20 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
                 <span>进纸方向 (前面板入 ➔ 后面板出)</span>
               </div>
               <div className="font-mono text-[9px] opacity-70">
-                标准30音纸带规格 · 70mm宽度 · 圆孔直径2.5mm
+                标准30音纸带规格 · 70mm宽度 · 拍数: {beatsPerMeasure}拍/节 · 共 {numMeasures} 节
               </div>
             </div>
 
-            {/* DYNAMIC PLAYHEAD READ LINE (Syncs with music box movement) */}
+            {/* DYNAMIC PLAYHEAD READ LINE (Syncs with music box movement, aligned with crosshair centers) */}
             <div
               className="absolute top-0 bottom-0 z-30 pointer-events-none will-change-transform"
               style={{
                 left: 0,
-                transform: `translate3d(${currentStep * zoom}px, 0, 0)`,
+                transform: `translate3d(${gridOriginX + currentStep * zoom}px, 0, 0)`,
               }}
             >
-              {/* Playhead Vertical Line */}
-              <div className="w-[2px] h-full bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)] relative">
+              {/* Playhead Vertical Line: centered exactly on currentStep crosshair */}
+              <div className="w-[2px] h-full bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)] relative -translate-x-[1px]">
                 {/* Top Arrow Indicator */}
                 <div className="absolute -top-1 -left-[5px] w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-amber-600" />
                 {/* Bottom Arrow Indicator */}
@@ -1106,93 +1270,123 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
 
         {/* Floating Batch Actions Bar for Selected Notes (整体删除 / 移调 / 移动) */}
         {selectedHoleIds.size > 0 && (
-          <div className="absolute bottom-3 sm:bottom-5 left-1/2 -translate-x-1/2 z-50 p-2 sm:p-2 bg-stone-900/95 backdrop-blur-md border border-amber-600/70 rounded-2xl shadow-2xl text-xs text-stone-200 select-none animate-in fade-in slide-in-from-bottom-2 duration-200">
-            {/* Desktop Layout (md and up): Clean single-row floating bar */}
-            <div className="hidden md:flex items-center gap-3">
-              {/* Badge */}
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-950/80 border border-amber-700/60 rounded-lg text-amber-300 font-medium shrink-0">
-                <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
-                <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 个音符</span>
-              </div>
-
-              <div className="w-[1px] h-4 bg-stone-800" />
-
-              {/* Batch Move in Time */}
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-stone-400 font-medium">移动:</span>
+          <div className="absolute bottom-3 sm:bottom-5 left-1/2 -translate-x-1/2 z-50 p-2 bg-stone-900/95 backdrop-blur-md border border-amber-600/70 rounded-2xl shadow-2xl text-xs text-stone-200 select-none animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {/* Desktop Layout (md and up): Clean single-row floating bar with vertically stacked +/- steppers */}
+            <div className="hidden md:flex items-center gap-2.5">
+              {/* Badge & Invert */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-950/80 border border-amber-700/60 rounded-lg text-amber-300 font-medium">
+                  <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+                  <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 音符</span>
+                </div>
                 <button
-                  onClick={() => handleMoveSelected(-1)}
-                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                  title="向左移动 1 步 (快捷键: ←)"
+                  onClick={handleInvertSelection}
+                  className="flex items-center gap-1 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded-lg text-stone-300 hover:text-amber-200 border border-stone-700/60 transition-all cursor-pointer text-xs"
+                  title="反向选择未被选中的所有音符"
                 >
-                  <ArrowLeft className="w-3 h-3" />
-                  <span>1步</span>
-                </button>
-                <button
-                  onClick={() => handleMoveSelected(1)}
-                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                  title="向右移动 1 步 (快捷键: →)"
-                >
-                  <span>1步</span>
-                  <ArrowRight className="w-3 h-3" />
-                </button>
-                <button
-                  onClick={() => handleMoveSelected(-4)}
-                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
-                  title="向左移动 1 拍 (4步) (快捷键: Shift+←)"
-                >
-                  -1拍
-                </button>
-                <button
-                  onClick={() => handleMoveSelected(4)}
-                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-400 hover:text-stone-200 font-mono text-[11px] transition-all cursor-pointer"
-                  title="向右移动 1 拍 (4步) (快捷键: Shift+→)"
-                >
-                  +1拍
+                  <RefreshCcw className="w-3 h-3 text-amber-400" />
+                  <span>反选</span>
                 </button>
               </div>
 
-              <div className="w-[1px] h-4 bg-stone-800" />
+              <div className="w-[1px] h-5 bg-stone-800 shrink-0" />
 
-              {/* Batch Transpose Pitch */}
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-stone-400 font-medium">移调:</span>
-                <button
-                  onClick={() => handleTransposeTines(1)}
-                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                  title="音高上移 1 音齿 (快捷键: ↑)"
-                >
-                  <ArrowUp className="w-3 h-3 text-amber-400" />
-                  <span>升齿</span>
-                </button>
-                <button
-                  onClick={() => handleTransposeTines(-1)}
-                  className="flex items-center gap-0.5 px-2 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 font-mono transition-all cursor-pointer"
-                  title="音高下移 1 音齿 (快捷键: ↓)"
-                >
-                  <ArrowDown className="w-3 h-3 text-amber-400" />
-                  <span>降齿</span>
-                </button>
-                <button
-                  onClick={() => handleTransposeSemitones(1)}
-                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
-                  title="升半音 (+1 Semitone)"
-                >
-                  +1半音
-                </button>
-                <button
-                  onClick={() => handleTransposeSemitones(-1)}
-                  className="px-1.5 py-1 bg-stone-800/80 hover:bg-stone-700 active:scale-95 rounded text-stone-300 font-mono text-[11px] transition-all cursor-pointer"
-                  title="降半音 (-1 Semitone)"
-                >
-                  -1半音
-                </button>
+              {/* Time Steppers: Stacked +/- for Step and Beat */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* Step +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1.5 py-0.5">
+                  <span className="text-[11px] text-stone-300 font-mono pr-1 select-none">步</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-1">
+                    <button
+                      onClick={() => handleMoveSelected(1)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-t text-[10px] text-stone-300 hover:text-amber-300 leading-none cursor-pointer transition-colors active:scale-90"
+                      title="向右移动 1 步 (快捷键: →)"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => handleMoveSelected(-1)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-b text-[10px] text-stone-300 hover:text-amber-300 leading-none cursor-pointer transition-colors active:scale-90"
+                      title="向左移动 1 步 (快捷键: ←)"
+                    >
+                      ▼
+                    </button>
+                  </div>
+                </div>
+
+                {/* Beat +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1.5 py-0.5">
+                  <span className="text-[11px] text-stone-300 font-mono pr-1 select-none">拍</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-1">
+                    <button
+                      onClick={() => handleMoveSelected(4)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-t text-[10px] font-bold text-stone-300 hover:text-amber-300 leading-none cursor-pointer transition-colors active:scale-90"
+                      title="向右移动 1 拍 (4步) (快捷键: Shift+→)"
+                    >
+                      +
+                    </button>
+                    <button
+                      onClick={() => handleMoveSelected(-4)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-b text-[10px] font-bold text-stone-300 hover:text-amber-300 leading-none cursor-pointer transition-colors active:scale-90"
+                      title="向左移动 1 拍 (4步) (快捷键: Shift+←)"
+                    >
+                      -
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div className="w-[1px] h-4 bg-stone-800" />
+              <div className="w-[1px] h-5 bg-stone-800 shrink-0" />
+
+              {/* Pitch Steppers: Stacked +/- for Tine and Semitone */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* Tine +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1.5 py-0.5">
+                  <span className="text-[11px] text-stone-300 font-mono pr-1 select-none">齿</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-1">
+                    <button
+                      onClick={() => handleTransposeTines(1)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-t text-[10px] text-amber-300 hover:text-amber-200 leading-none cursor-pointer transition-colors active:scale-90"
+                      title="音高上移 1 音齿 (快捷键: ↑)"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => handleTransposeTines(-1)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-b text-[10px] text-amber-300 hover:text-amber-200 leading-none cursor-pointer transition-colors active:scale-90"
+                      title="音高下移 1 音齿 (快捷键: ↓)"
+                    >
+                      ▼
+                    </button>
+                  </div>
+                </div>
+
+                {/* Semitone +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1.5 py-0.5">
+                  <span className="text-[11px] text-stone-300 font-mono pr-1 select-none">半音</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-1">
+                    <button
+                      onClick={() => handleTransposeSemitones(1)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-t text-[10px] font-bold text-stone-300 hover:text-white leading-none cursor-pointer transition-colors active:scale-90"
+                      title="升半音 (+1 Semitone)"
+                    >
+                      +
+                    </button>
+                    <button
+                      onClick={() => handleTransposeSemitones(-1)}
+                      className="w-4 h-3 flex items-center justify-center hover:bg-stone-700 rounded-b text-[10px] font-bold text-stone-300 hover:text-white leading-none cursor-pointer transition-colors active:scale-90"
+                      title="降半音 (-1 Semitone)"
+                    >
+                      -
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-[1px] h-5 bg-stone-800 shrink-0" />
 
               {/* Actions */}
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={handleDuplicateSelected}
                   className="flex items-center gap-1 px-2.5 py-1 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-300 hover:text-stone-100 transition-all cursor-pointer"
@@ -1219,19 +1413,27 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
               </div>
             </div>
 
-            {/* Mobile Layout (< md): Non-scrolling 2-row compact card */}
-            <div className="flex md:hidden flex-col gap-2 w-[310px] text-xs">
-              {/* Row 1: Badge + Actions */}
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-amber-950/80 border border-amber-700/60 rounded-md text-amber-300 font-medium">
+            {/* Mobile Layout (< md): Non-scrolling compact layout with stacked +/- steppers */}
+            <div className="flex md:hidden flex-col gap-1.5 w-auto max-w-[340px] text-xs">
+              {/* Row 1: Badge + Invert + Actions */}
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-950/80 border border-amber-700/60 rounded-md text-amber-300 font-medium shrink-0">
                   <CheckSquare className="w-3 h-3 text-amber-400" />
-                  <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong> 音符</span>
+                  <span>已选 <strong className="font-mono text-amber-200">{selectedHoleIds.size}</strong></span>
                 </div>
+
+                <button
+                  onClick={handleInvertSelection}
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-stone-800 hover:bg-stone-700 rounded text-stone-300 hover:text-amber-300 border border-stone-700 cursor-pointer text-[11px]"
+                >
+                  <RefreshCcw className="w-3 h-3 text-amber-400" />
+                  <span>反选</span>
+                </button>
 
                 <div className="flex items-center gap-1">
                   <button
                     onClick={handleDuplicateSelected}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 transition-all cursor-pointer text-[11px]"
+                    className="flex items-center gap-0.5 px-1.5 py-0.5 bg-stone-800 hover:bg-stone-700 active:scale-95 rounded text-stone-200 transition-all cursor-pointer text-[11px]"
                     title="复制音符"
                   >
                     <Copy className="w-3 h-3 text-blue-400" />
@@ -1239,7 +1441,7 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
                   </button>
                   <button
                     onClick={handleDeleteSelected}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-red-950/80 hover:bg-red-900 border border-red-700/60 active:scale-95 rounded text-red-200 transition-all cursor-pointer text-[11px]"
+                    className="flex items-center gap-0.5 px-1.5 py-0.5 bg-red-950/80 hover:bg-red-900 border border-red-700/60 active:scale-95 rounded text-red-200 transition-all cursor-pointer text-[11px]"
                     title="删除音符"
                   >
                     <Trash2 className="w-3 h-3 text-red-400" />
@@ -1255,52 +1457,42 @@ export const PaperStripEditor: React.FC<PaperStripEditorProps> = ({
                 </div>
               </div>
 
-              {/* Row 2: Move & Transpose Steppers */}
-              <div className="flex items-center justify-between gap-1 pt-1.5 border-t border-stone-800/80 text-[11px]">
-                {/* Move in time */}
-                <div className="flex items-center gap-1">
-                  <span className="text-stone-400">移:</span>
-                  <button
-                    onClick={() => handleMoveSelected(-1)}
-                    className="px-1.5 py-0.5 bg-stone-800 rounded text-stone-200 cursor-pointer active:scale-95"
-                  >
-                    ◀ 1步
-                  </button>
-                  <button
-                    onClick={() => handleMoveSelected(1)}
-                    className="px-1.5 py-0.5 bg-stone-800 rounded text-stone-200 cursor-pointer active:scale-95"
-                  >
-                    1步 ▶
-                  </button>
+              {/* Row 2: Stacked +/- Steppers for Time and Pitch */}
+              <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-stone-800/80 text-[11px]">
+                {/* Step +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1 py-0.5">
+                  <span className="text-[10px] text-stone-400 pr-0.5 select-none">步</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-0.5">
+                    <button onClick={() => handleMoveSelected(1)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-stone-300 leading-none">▲</button>
+                    <button onClick={() => handleMoveSelected(-1)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-stone-300 leading-none">▼</button>
+                  </div>
                 </div>
 
-                {/* Transpose */}
-                <div className="flex items-center gap-1">
-                  <span className="text-stone-400">调:</span>
-                  <button
-                    onClick={() => handleTransposeTines(1)}
-                    className="px-1.5 py-0.5 bg-stone-800 rounded text-amber-300 cursor-pointer active:scale-95"
-                  >
-                    ▲升齿
-                  </button>
-                  <button
-                    onClick={() => handleTransposeTines(-1)}
-                    className="px-1.5 py-0.5 bg-stone-800 rounded text-amber-300 cursor-pointer active:scale-95"
-                  >
-                    ▼降齿
-                  </button>
-                  <button
-                    onClick={() => handleTransposeSemitones(1)}
-                    className="px-1 py-0.5 bg-stone-800/80 rounded text-stone-300 cursor-pointer active:scale-95"
-                  >
-                    +半
-                  </button>
-                  <button
-                    onClick={() => handleTransposeSemitones(-1)}
-                    className="px-1 py-0.5 bg-stone-800/80 rounded text-stone-300 cursor-pointer active:scale-95"
-                  >
-                    -半
-                  </button>
+                {/* Beat +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1 py-0.5">
+                  <span className="text-[10px] text-stone-400 pr-0.5 select-none">拍</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-0.5">
+                    <button onClick={() => handleMoveSelected(4)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-stone-300 leading-none">+</button>
+                    <button onClick={() => handleMoveSelected(-4)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-stone-300 leading-none">-</button>
+                  </div>
+                </div>
+
+                {/* Tine +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1 py-0.5">
+                  <span className="text-[10px] text-amber-400 pr-0.5 select-none">齿</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-0.5">
+                    <button onClick={() => handleTransposeTines(1)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-amber-300 leading-none">▲</button>
+                    <button onClick={() => handleTransposeTines(-1)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-amber-300 leading-none">▼</button>
+                  </div>
+                </div>
+
+                {/* Semitone +/- */}
+                <div className="flex items-center bg-stone-800/90 border border-stone-700/70 rounded px-1 py-0.5">
+                  <span className="text-[10px] text-stone-300 pr-0.5 select-none">半音</span>
+                  <div className="flex flex-col -my-0.5 border-l border-stone-700/80 pl-0.5">
+                    <button onClick={() => handleTransposeSemitones(1)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-stone-300 leading-none">+</button>
+                    <button onClick={() => handleTransposeSemitones(-1)} className="w-3.5 h-2.5 flex items-center justify-center hover:bg-stone-700 text-[9px] text-stone-300 leading-none">-</button>
+                  </div>
                 </div>
               </div>
             </div>

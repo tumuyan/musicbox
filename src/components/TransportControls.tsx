@@ -19,8 +19,10 @@ import {
   Image as ImageIcon,
   SlidersHorizontal,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Sparkles,
 } from 'lucide-react';
+import { getStepsPerMeasure, getTotalMeasures, autoAlignSongByBpm } from '../utils/bpmAlign';
 
 interface TransportControlsProps {
   currentSong: SongData;
@@ -111,9 +113,10 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
     }
   };
 
-  const progressPercent = (currentStep / currentSong.totalSteps) * 100;
-  const currentMeasure = Math.floor(currentStep / (currentSong.timeSignature[0] * 4)) + 1;
-  const totalMeasures = Math.ceil(currentSong.totalSteps / (currentSong.timeSignature[0] * 4));
+  const stepsPerMeasure = getStepsPerMeasure(currentSong.timeSignature);
+  const currentMeasure = Math.floor(currentStep / stepsPerMeasure) + 1;
+  const totalMeasures = getTotalMeasures(currentSong.totalSteps, stepsPerMeasure);
+  const beatsPerMeasure = currentSong.timeSignature ? currentSong.timeSignature[0] : 4;
 
   return (
     <div className="bg-stone-900 border-b border-stone-800 px-3 sm:px-6 py-2 sm:py-2.5 select-none">
@@ -221,7 +224,7 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
           <div className="flex items-center gap-3.5 text-xs text-stone-400 shrink-0">
             {/* BPM */}
             <div className="flex items-center gap-1.5">
-              <span className="whitespace-nowrap">速度:</span>
+              <span className="whitespace-nowrap text-stone-400">BPM:</span>
               <input
                 type="range"
                 min={40}
@@ -229,8 +232,20 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
                 value={currentSong.bpm}
                 onChange={(e) => handleBpmChange(parseInt(e.target.value))}
                 className="w-16 lg:w-20 h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                title="调节走纸与打孔节拍速度 (BPM)"
               />
-              <span className="font-mono text-stone-300 tabular-nums w-11">{currentSong.bpm}</span>
+              <span className="font-mono text-amber-300 font-semibold tabular-nums w-7">{currentSong.bpm}</span>
+              <button
+                onClick={() => {
+                  const aligned = autoAlignSongByBpm(currentSong);
+                  onSelectSong(aligned);
+                }}
+                className="flex items-center gap-1 px-2 py-0.5 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-stone-950 border border-amber-600/40 rounded text-xs transition-colors cursor-pointer group shadow-xs"
+                title="分析乐曲音符并自动测算最佳BPM，使所有孔吸附对齐到格线"
+              >
+                <Sparkles className="w-3 h-3 text-amber-400 group-hover:text-stone-950" />
+                <span className="text-[11px]">自动对齐</span>
+              </button>
             </div>
 
             <span className="text-stone-700">|</span>
@@ -401,7 +416,7 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
               <div className="grid grid-cols-2 gap-3 items-center">
                 {/* BPM Slider */}
                 <div className="flex items-center justify-between gap-2 bg-stone-900/90 p-2 rounded-lg border border-stone-800">
-                  <span className="text-stone-400 text-[11px]">速度:</span>
+                  <span className="text-stone-400 text-[11px]">BPM:</span>
                   <input
                     type="range"
                     min={40}

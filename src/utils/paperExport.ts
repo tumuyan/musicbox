@@ -61,16 +61,21 @@ export function generatePrintablePaperStripSVG(song: SongData): string {
     svg += `  <text class="text-note" x="2" y="${y + 0.5}">${noteName}</text>\n`;
   }
 
+  // Calculate dynamic steps per measure from time signature
+  const stepsPerMeasure = song.timeSignature
+    ? (song.timeSignature[1] === 8 ? Math.max(2, song.timeSignature[0] * 2) : Math.max(4, song.timeSignature[0] * 4))
+    : 16;
+
   // Draw vertical beat / measure lines
   for (let s = 0; s <= totalStepsWithMargins; s++) {
     const x = s * stepWidthMm;
     const songStep = s - leadInSteps;
-    const isMeasure = songStep >= 0 && songStep % 16 === 0;
+    const isMeasure = songStep >= 0 && songStep % stepsPerMeasure === 0;
     const isBeat = songStep >= 0 && songStep % 4 === 0;
 
     if (isMeasure) {
       svg += `  <line class="bar-line" x1="${x}" y1="${topMarginMm}" x2="${x}" y2="${stripWidthMm - bottomMarginMm}" />\n`;
-      const barNum = Math.floor(songStep / 16) + 1;
+      const barNum = Math.floor(songStep / stepsPerMeasure) + 1;
       svg += `  <text class="text-note" x="${x + 0.5}" y="${topMarginMm - 1.5}">M${barNum}</text>\n`;
     } else if (isBeat) {
       svg += `  <line class="beat-line" x1="${x}" y1="${topMarginMm}" x2="${x}" y2="${stripWidthMm - bottomMarginMm}" />\n`;

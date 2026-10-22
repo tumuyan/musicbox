@@ -22,25 +22,51 @@ export async function parseMidiFile(file: File | ArrayBuffer, transposeSemitones
 
   // Determine song metadata
   const title = (file instanceof File ? file.name.replace(/\.[^/.]+$/, '') : 'Imported MIDI') || 'Custom Music Box Tape';
-  const bpm = midi.header.tempos.length > 0 ? Math.round(midi.header.tempos[0].bpm) : 100;
   const timeSignature: [number, number] = midi.header.timeSignatures.length > 0
     ? [midi.header.timeSignatures[0].timeSignature[0], midi.header.timeSignatures[0].timeSignature[1]]
     : [4, 4];
 
-  // Seconds per step (16th note: 4 steps per beat)
+  // 1. Gather raw note onset times in seconds
+  const rawEvents: { time: number; midi: number }[] = [];
+  midi.tracks.forEach((track) => {
+    track.notes.forEach((note) => {
+      rawEvents.push({ time: note.time, midi: note.midi + transposeSemitones });
+    });
+  });
+
+  // 2. Default: optimize BPM to automatically align note onsets with 16th-note/beat grid lines
+  const headerBpm = midi.header.tempos.length > 0 ? midi.header.tempos[0].bpm : 100;
+  let bestBpm = Math.round(headerBpm);
+  let minError = Infinity;
+
+  const startScan = Math.max(40, Math.round(headerBpm - 20));
+  const endScan = Math.min(180, Math.round(headerBpm + 20));
+
+  if (rawEvents.length > 0) {
+    for (let b = startScan; b <= endScan; b++) {
+      const candStepSec = (60 / b) / 4;
+      let residualSum = 0;
+      rawEvents.forEach((ev) => {
+        const stepFloat = ev.time / candStepSec;
+        const diff = Math.abs(stepFloat - Math.round(stepFloat));
+        residualSum += diff;
+      });
+      const avg = residualSum / rawEvents.length;
+      if (avg < minError) {
+        minError = avg;
+        bestBpm = b;
+      }
+    }
+  }
+
+  const bpm = Math.min(220, Math.max(40, bestBpm));
   const secondsPerBeat = 60 / bpm;
   const secondsPerStep = secondsPerBeat / 4;
 
-  const rawNotes: { step: number; midi: number }[] = [];
-
-  midi.tracks.forEach((track) => {
-    track.notes.forEach((note) => {
-      // Step position calculated strictly from note onset time
-      const step = Math.round(note.time / secondsPerStep);
-      const transposedMidi = note.midi + transposeSemitones;
-      rawNotes.push({ step, midi: transposedMidi });
-    });
-  });
+  const rawNotes: { step: number; midi: number }[] = rawEvents.map((ev) => ({
+    step: Math.round(ev.time / secondsPerStep),
+    midi: ev.midi,
+  }));
 
   // Calculate best transposition recommendation if not manually specified
   let bestTranspose = 0;
