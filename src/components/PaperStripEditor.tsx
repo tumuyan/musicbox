@@ -86,14 +86,18 @@ const PaperMatrix: React.FC<PaperMatrixProps> = React.memo(({
       {Array.from({ length: TOTAL_TINES }).map((_, idx) => {
         const tineIndex = TOTAL_TINES - 1 - idx;
         const topPos = idx * rowHeight;
-        const isOctaveC = MUSIC_BOX_SCALE[tineIndex].name.startsWith('C');
+        const note = MUSIC_BOX_SCALE[tineIndex];
+        const isOctaveC = note.name.startsWith('C') && !note.name.includes('#');
+        const isFifthG = note.name.startsWith('G') && !note.name.includes('#');
 
         return (
           <div
             key={`pitch-line-${tineIndex}`}
             className={`absolute left-0 w-full pointer-events-none ${
               isOctaveC
-                ? 'border-b border-[#C8BDAB]'
+                ? 'border-b-2 border-[#8E7E6B]'
+                : isFifthG
+                ? 'border-b border-[#B8AA94]'
                 : 'border-b border-[#E8E2D5]'
             }`}
             style={{ top: topPos + rowHeight / 2 }}

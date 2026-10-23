@@ -151,21 +151,21 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   const boxHeight = 44;
   const wallThick = 7;
 
-  // Physical specifications of paper strip & 1:1 pixel projection constants
-  const CANVAS_W = 2048;
-  const CANVAS_H = 326;
+  // Physical specifications of paper strip & high-definition pixel projection constants
+  const CANVAS_W = 4096;
+  const CANVAS_H = 652;
   const TOTAL_ARC_LENGTH = 290.127; // mm
   const READ_HEAD_FRACTION = 142.633 / TOTAL_ARC_LENGTH; // ~0.491624
-  const READ_HEAD_X = CANVAS_W * READ_HEAD_FRACTION;     // 1006.84 px
+  const READ_HEAD_X = CANVAS_W * READ_HEAD_FRACTION;     // 2013.68 px
   const STEP_PITCH_MM = 5.0;                             // 5mm per 16th-note step
-  const SCALE_X = CANVAS_W / TOTAL_ARC_LENGTH;           // 7.059 px/mm
-  const STEP_WIDTH_PX = STEP_PITCH_MM * SCALE_X;         // 35.295 px/step
+  const SCALE_X = CANVAS_W / TOTAL_ARC_LENGTH;           // 14.118 px/mm
+  const STEP_WIDTH_PX = STEP_PITCH_MM * SCALE_X;         // 70.59 px/step
   const TILE_STEPS = 16;                                 // 1 Measure = 16 steps
-  const TOP_MARGIN = 49;
-  const BOTTOM_MARGIN = 49;
-  const USABLE_H = CANVAS_H - TOP_MARGIN - BOTTOM_MARGIN; // 228 px
-  const TINE_PITCH = USABLE_H / (TOTAL_TINES - 1);        // 7.862 px per tine track (30 tracks)
-  const HOLE_RADIUS = 3.4;                               // 3.4px radius (6.8px diameter, perfectly fits 7.86px tine pitch)
+  const TOP_MARGIN = 98;
+  const BOTTOM_MARGIN = 98;
+  const USABLE_H = CANVAS_H - TOP_MARGIN - BOTTOM_MARGIN; // 456 px
+  const TINE_PITCH = USABLE_H / (TOTAL_TINES - 1);        // 15.724 px per tine track (30 tracks)
+  const HOLE_RADIUS = 6.8;                               // 6.8px radius (13.6px diameter, perfectly fits 15.72px tine pitch)
 
   // Render dynamic Paper Strip Texture onto 2D canvas continuously within visible window (zero seams, no half-holes)
   const updatePaperTexture = useCallback(() => {
@@ -189,27 +189,46 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     ctx.fillStyle = edgeGrad;
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // 2. Margins boundary dashed lines
-    ctx.strokeStyle = '#D4CBB8';
-    ctx.lineWidth = 1.0;
-    ctx.setLineDash([4, 4]);
+    // 2. Margins boundary lines (Crisp and solid)
+    ctx.strokeStyle = '#6E5845';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(0, TOP_MARGIN);
     ctx.lineTo(CANVAS_W, TOP_MARGIN);
     ctx.moveTo(0, CANVAS_H - BOTTOM_MARGIN);
     ctx.lineTo(CANVAS_W, CANVAS_H - BOTTOM_MARGIN);
     ctx.stroke();
-    ctx.setLineDash([]);
 
-    // 3. 30 Horizontal pitch guide lines (Intermediate grid lines for all 30 notes)
-    ctx.strokeStyle = '#E3DACB';
-    ctx.lineWidth = 0.75;
+    // 3. 30 Horizontal pitch guide lines (Uniform solid lines across all tracks - completely smooth and even!)
+    ctx.setLineDash([]);
     for (let i = 0; i < TOTAL_TINES; i++) {
       const y = CANVAS_H - BOTTOM_MARGIN - (i * TINE_PITCH);
+      const note = MUSIC_BOX_SCALE[i];
+      const noteName = note ? note.name : '';
+      const isC = noteName.startsWith('C') && !noteName.includes('#');
+
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(CANVAS_W, y);
-      ctx.stroke();
+      if (isC) {
+        // Octave C lines (C3, C4, C5, C6): Subtle darker tone, uniform line width
+        ctx.strokeStyle = '#503A28';
+        ctx.lineWidth = 1.35;
+        ctx.moveTo(0, y);
+        ctx.lineTo(CANVAS_W, y);
+        ctx.stroke();
+
+        // High-contrast pitch name badge on left margin guide
+        ctx.fillStyle = '#503A28';
+        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText(noteName, 18, y + 5);
+      } else {
+        // All other pitch tracks: Uniform, consistent, continuous solid lines
+        ctx.strokeStyle = '#8C7762';
+        ctx.lineWidth = 1.1;
+        ctx.moveTo(25, y);
+        ctx.lineTo(CANVAS_W, y);
+        ctx.stroke();
+      }
     }
 
     // 4. Calculate visible step range (only ~58 steps visible at once, avoiding whole-song baking)
@@ -222,42 +241,87 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       ? (song.timeSignature[1] === 8 ? Math.max(2, song.timeSignature[0] * 2) : Math.max(4, song.timeSignature[0] * 4))
       : 16;
 
-    // Vertical Measure & Beat Grid Lines
+    // Vertical Measure & Beat Grid Lines (Uniform, flush bounds, no broken dashes or uneven heights)
+    ctx.setLineDash([]);
     for (let s = minStep; s <= maxStep; s++) {
       const x = READ_HEAD_X + (s - currentStep) * STEP_WIDTH_PX;
-      if (x < -20 || x > CANVAS_W + 20) continue;
+      if (x < -40 || x > CANVAS_W + 40) continue;
 
       const isMeasure = s >= 0 && s % stepsPerMeasure === 0;
       const isBeat = s >= 0 && s % 4 === 0;
+      const isEighth = s >= 0 && s % 2 === 0 && !isBeat;
+      const isSixteenth = s >= 0 && !isMeasure && !isBeat && !isEighth;
 
       if (isMeasure) {
-        ctx.strokeStyle = '#B0A290';
+        // Measure line: Solid, flush from TOP_MARGIN to BOTTOM_MARGIN
+        ctx.strokeStyle = '#4A3422';
         ctx.lineWidth = 1.8;
         ctx.beginPath();
-        ctx.moveTo(x, TOP_MARGIN - 5);
-        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 5);
+        ctx.moveTo(x, TOP_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN);
         ctx.stroke();
 
+        // Uniform margin ruler ticks (6px)
+        ctx.beginPath();
+        ctx.moveTo(x, TOP_MARGIN - 6);
+        ctx.lineTo(x, TOP_MARGIN);
+        ctx.moveTo(x, CANVAS_H - BOTTOM_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 6);
+        ctx.stroke();
+
+        // Clean sans-serif measure labels in top and bottom margins
         const m = Math.floor(s / stepsPerMeasure);
-        ctx.fillStyle = '#7C6C58';
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText(`M${m + 1}`, x + 4, TOP_MARGIN - 7);
+        ctx.fillStyle = '#4A3422';
+        ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`M${m + 1}`, x, TOP_MARGIN - 14);
+        ctx.fillText(`M${m + 1}`, x, CANVAS_H - BOTTOM_MARGIN + 28);
+        ctx.textAlign = 'left';
       } else if (isBeat) {
-        ctx.strokeStyle = '#CCC1AD';
-        ctx.lineWidth = 1.0;
+        // Beat line: Solid, flush from TOP_MARGIN to BOTTOM_MARGIN
+        ctx.strokeStyle = '#75604D';
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(x, TOP_MARGIN);
         ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN);
         ctx.stroke();
-      } else if (s >= 0) {
-        ctx.strokeStyle = '#ECE4D4';
-        ctx.lineWidth = 0.5;
+
+        // Uniform margin ruler ticks (4px)
+        ctx.beginPath();
+        ctx.moveTo(x, TOP_MARGIN - 4);
+        ctx.lineTo(x, TOP_MARGIN);
+        ctx.moveTo(x, CANVAS_H - BOTTOM_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 4);
+        ctx.stroke();
+      } else if (isEighth) {
+        // 8th-note line: Clean, solid fine hairline (flush from margin to margin)
+        ctx.strokeStyle = '#A89784';
+        ctx.lineWidth = 0.85;
         ctx.beginPath();
         ctx.moveTo(x, TOP_MARGIN);
         ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN);
+        ctx.stroke();
+
+        // Margin ruler ticks (3px)
+        ctx.beginPath();
+        ctx.moveTo(x, TOP_MARGIN - 3);
+        ctx.lineTo(x, TOP_MARGIN);
+        ctx.moveTo(x, CANVAS_H - BOTTOM_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 3);
+        ctx.stroke();
+      } else if (isSixteenth) {
+        // 16th-note: Clean ruler ticks in margin only, leaving cell body clear and even
+        ctx.strokeStyle = '#B8A895';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(x, TOP_MARGIN - 3);
+        ctx.lineTo(x, TOP_MARGIN);
+        ctx.moveTo(x, CANVAS_H - BOTTOM_MARGIN);
+        ctx.lineTo(x, CANVAS_H - BOTTOM_MARGIN + 3);
         ctx.stroke();
       }
     }
+    ctx.setLineDash([]);
 
     // 5. Punched Circular Holes (True Physical Through-Holes with continuous coordinates - zero seam cuts!)
     const visibleHoles = song.holes.filter(h => h.step >= minStep - 1 && h.step <= maxStep + 1);
@@ -283,32 +347,32 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
       // Outer mechanical punch impression ring
       ctx.beginPath();
-      ctx.arc(hx, hy, HOLE_RADIUS + 0.5, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(170, 155, 135, 0.4)';
-      ctx.lineWidth = 0.6;
+      ctx.arc(hx, hy, HOLE_RADIUS + 0.9, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(160, 145, 125, 0.45)';
+      ctx.lineWidth = 1.2;
       ctx.stroke();
 
       // Top-left interior cut-edge shadow (paper thickness depth)
       ctx.beginPath();
-      ctx.arc(hx, hy, HOLE_RADIUS + 0.1, Math.PI * 0.7, Math.PI * 1.8);
-      ctx.strokeStyle = 'rgba(50, 36, 22, 0.75)';
-      ctx.lineWidth = 0.8;
+      ctx.arc(hx, hy, HOLE_RADIUS + 0.2, Math.PI * 0.7, Math.PI * 1.8);
+      ctx.strokeStyle = 'rgba(40, 26, 14, 0.8)';
+      ctx.lineWidth = 1.6;
       ctx.stroke();
 
       // Bottom-right cut-edge highlight
       ctx.beginPath();
-      ctx.arc(hx, hy, HOLE_RADIUS + 0.1, -Math.PI * 0.2, Math.PI * 0.7);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-      ctx.lineWidth = 0.6;
+      ctx.arc(hx, hy, HOLE_RADIUS + 0.2, -Math.PI * 0.2, Math.PI * 0.7);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.lineWidth = 1.2;
       ctx.stroke();
 
       ctx.restore();
     });
 
     // 6. Hairline alignment indicator under the pressure plate at read line
-    ctx.strokeStyle = 'rgba(217, 119, 6, 0.35)';
-    ctx.lineWidth = 1.0;
-    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(217, 119, 6, 0.4)';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([5, 5]);
     ctx.beginPath();
     ctx.moveTo(READ_HEAD_X, 0);
     ctx.lineTo(READ_HEAD_X, CANVAS_H);
@@ -364,9 +428,23 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   ): THREE.Group => {
     const gearGroup = new THREE.Group();
 
-    // 1. Central axle collar
-    const collarGeo = new THREE.CylinderGeometry(radius * 0.28, radius * 0.28, thickness * 1.35, 16);
-    collarGeo.rotateZ(Math.PI / 2);
+    // 1. Central axle hub collar with hollow bore through which the shaft passes
+    const collarOuterR = radius * 0.28;
+    const collarInnerR = 1.42;
+    const collarShape = new THREE.Shape();
+    collarShape.absarc(0, 0, collarOuterR, 0, Math.PI * 2, false);
+    const collarHole = new THREE.Path();
+    collarHole.absarc(0, 0, collarInnerR, 0, Math.PI * 2, true);
+    collarShape.holes.push(collarHole);
+    const collarGeo = new THREE.ExtrudeGeometry(collarShape, {
+      depth: thickness * 1.35,
+      bevelEnabled: true,
+      bevelThickness: 0.08,
+      bevelSize: 0.05,
+      bevelSegments: 2,
+    });
+    collarGeo.translate(0, 0, -(thickness * 1.35) / 2);
+    collarGeo.rotateY(Math.PI / 2);
     const collarMesh = new THREE.Mesh(collarGeo, brassMaterial);
     gearGroup.add(collarMesh);
 
@@ -471,6 +549,11 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
         }
       }
     }
+
+    // Central axle bore through the gear disc (allows axle shaft to pass through cleanly)
+    const centerBorePath = new THREE.Path();
+    centerBorePath.absarc(0, 0, 1.42, 0, Math.PI * 2, true);
+    shape.holes.push(centerBorePath);
 
     // 4. Extrude the gear with crisp, delicate bevels along the shaft axis that preserve pointed tooth tips
     const extrudeSettings: THREE.ExtrudeGeometryOptions = {
@@ -1012,15 +1095,45 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     const mechGroup = new THREE.Group();
     musicBoxGroup.add(mechGroup);
 
-    // Brass Bed Plate under the movement
-    const chassisW = 76;
-    const chassisD = 68;
+    // Brass Bed Plate with engineered Gear 1 Clearance Well (避让槽)
     const chassisThick = 4;
-    const chassisY = -0.5; // Firmly underneath comb and paper
-    const chassisMesh = new THREE.Mesh(new THREE.BoxGeometry(chassisW, chassisThick, chassisD), brassMat);
-    chassisMesh.position.set(0, chassisY, 0);
-    chassisMesh.receiveShadow = true;
-    mechGroup.add(chassisMesh);
+    const chassisY = -0.5; // Top face at y = +1.5, bottom face at y = -2.5
+
+    // 1. Main Left Bed Plate (x in [-38, +29.5], depth 68mm)
+    const mainChassisGeo = new THREE.BoxGeometry(67.5, chassisThick, 68);
+    const mainChassisMesh = new THREE.Mesh(mainChassisGeo, brassMat);
+    mainChassisMesh.position.set(-4.25, chassisY, 0);
+    mainChassisMesh.receiveShadow = true;
+    mechGroup.add(mainChassisMesh);
+
+    // 2. Front Gearbox Bridge (x in [29.5, 42.5], z in [+6.8, +34.0])
+    const frontGearBridgeGeo = new THREE.BoxGeometry(13, chassisThick, 27.2);
+    const frontGearBridgeMesh = new THREE.Mesh(frontGearBridgeGeo, brassMat);
+    frontGearBridgeMesh.position.set(36.0, chassisY, 20.4);
+    frontGearBridgeMesh.receiveShadow = true;
+    mechGroup.add(frontGearBridgeMesh);
+
+    // 3. Rear Gearbox Bridge (x in [29.5, 42.5], z in [-34.0, -6.8])
+    const rearGearBridgeGeo = new THREE.BoxGeometry(13, chassisThick, 27.2);
+    const rearGearBridgeMesh = new THREE.Mesh(rearGearBridgeGeo, brassMat);
+    rearGearBridgeMesh.position.set(36.0, chassisY, -20.4);
+    rearGearBridgeMesh.receiveShadow = true;
+    mechGroup.add(rearGearBridgeMesh);
+
+    // 4. Outer Right Frame Flange (x in [40.5, 42.5], z in [-6.8, +6.8])
+    const outerGearFlangeGeo = new THREE.BoxGeometry(2.0, chassisThick, 13.6);
+    const outerGearFlangeMesh = new THREE.Mesh(outerGearFlangeGeo, brassMat);
+    outerGearFlangeMesh.position.set(41.5, chassisY, 0);
+    outerGearFlangeMesh.receiveShadow = true;
+    mechGroup.add(outerGearFlangeMesh);
+
+    // 5. Recessed Lower Sump Plate under Gear 1 (Hollow clearance well at y = -3.2)
+    // Allows Gear 1 (lowest point y = -1.8) to spin freely with 1.4mm clearance and zero clipping!
+    const gearWellPanGeo = new THREE.BoxGeometry(11, 1.4, 13.6);
+    const gearWellPanMesh = new THREE.Mesh(gearWellPanGeo, brassMat);
+    gearWellPanMesh.position.set(35.0, -3.2, 0);
+    gearWellPanMesh.receiveShadow = true;
+    mechGroup.add(gearWellPanMesh);
 
     // =========================================================================
     // Comb teeth rendering disabled per request ("先不要绘制音齿了")
@@ -1214,11 +1327,12 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     mechGroup.add(gear2CompoundGroup);
     gear2Ref.current = gear2CompoundGroup;
 
-    // Intermediate steel axle pin
-    const interAxleGeo = new THREE.CylinderGeometry(1.2, 1.2, 16, 16);
+    // Intermediate steel axle pin (Firmly anchored between inner and outer brackets, NO floating!)
+    // Spans from x = 30.2 to x = 41.8, fully supported at both ends by brass bearing bosses
+    const interAxleGeo = new THREE.CylinderGeometry(1.2, 1.2, 11.6, 16);
     interAxleGeo.rotateZ(Math.PI / 2);
     const interAxleMesh = new THREE.Mesh(interAxleGeo, steelCombMat);
-    interAxleMesh.position.set(2.0, 0, 0);
+    interAxleMesh.position.set(1.0, 0, 0);
     gear2CompoundGroup.add(interAxleMesh);
 
     // Gear 2A: Intermediate Pinion (Z2A = 12 teeth, radius 3.8mm, driven by Gear 1)
@@ -1241,13 +1355,32 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     mechGroup.add(gear3Group);
     gear3Ref.current = gear3Group;
 
-    // Outer Gearbox Support Bracket with bearing bosses
+    const bossGeo = new THREE.CylinderGeometry(2.0, 2.0, 1.5, 12);
+    bossGeo.rotateZ(Math.PI / 2);
+
+    // Inner Gearbox Support Bracket with bearing bosses (x = 30.5)
+    // Firmly holds the inner ends of the Gear 2 axle, Crank shaft, and Roller axle
+    const innerGearPlate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 18, 26), brassMat);
+    innerGearPlate.position.set(gearX - 4.5, 8.2, -6.5);
+    mechGroup.add(innerGearPlate);
+
+    const bossCrankInner = new THREE.Mesh(bossGeo, brassMat);
+    bossCrankInner.position.set(gearX - 5.2, paperY, 0);
+    mechGroup.add(bossCrankInner);
+
+    const bossInterInner = new THREE.Mesh(bossGeo, brassMat);
+    bossInterInner.position.set(gearX - 5.2, 11.9, -5.5);
+    mechGroup.add(bossInterInner);
+
+    const bossRollerInner = new THREE.Mesh(bossGeo, brassMat);
+    bossRollerInner.position.set(gearX - 5.2, rollerY, rollerZ);
+    mechGroup.add(bossRollerInner);
+
+    // Outer Gearbox Support Bracket with bearing bosses (x = 40.5)
     const gearPlate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 18, 26), brassMat);
     gearPlate.position.set(gearX + 5.5, 8.2, -6.5);
     mechGroup.add(gearPlate);
 
-    const bossGeo = new THREE.CylinderGeometry(2.0, 2.0, 1.5, 12);
-    bossGeo.rotateZ(Math.PI / 2);
     const bossCrank = new THREE.Mesh(bossGeo, brassMat);
     bossCrank.position.set(gearX + 6.2, paperY, 0);
     mechGroup.add(bossCrank);
@@ -1262,16 +1395,16 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
 
     // 8. Continuous Paper Tape Ribbon:
     const paperCanvas = document.createElement('canvas');
-    paperCanvas.width = 2048;
-    paperCanvas.height = 326;
+    paperCanvas.width = CANVAS_W;
+    paperCanvas.height = CANVAS_H;
     paperCanvasRef.current = paperCanvas;
 
     const paperTexture = new THREE.CanvasTexture(paperCanvas);
     paperTexture.wrapS = THREE.ClampToEdgeWrapping;
     paperTexture.wrapT = THREE.ClampToEdgeWrapping;
     paperTexture.colorSpace = THREE.SRGBColorSpace;
-    paperTexture.generateMipmaps = true;
-    paperTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    paperTexture.generateMipmaps = false;
+    paperTexture.minFilter = THREE.LinearFilter;
     paperTexture.magFilter = THREE.LinearFilter;
     if (rendererRef.current) {
       paperTexture.anisotropy = rendererRef.current.capabilities.getMaxAnisotropy();
@@ -1385,17 +1518,21 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
     musicBoxGroup.add(continuousPaperMesh);
 
     // 9. Brass Hand Crank on right exterior wall
-    // Shaft extends from gear1 at x = gearX through the right wall to the crank handle
+    // Shaft extends from inner bracket (x = 30.5) through Gear 1 (x = 35.0),
+    // through outer gearbox bracket (x = 40.5) and right box wall (x = 63.5-70) into crank handle
     const crankGroup = new THREE.Group();
     crankGroup.position.set(boxWidth / 2 + 1, paperY, 0);
     musicBoxGroup.add(crankGroup);
     crankGroupRef.current = crankGroup;
 
-    // Drive shaft extending through right wall
-    const shaftGeo = new THREE.CylinderGeometry(1.6, 1.6, 38, 16);
+    // Drive shaft extending through inner bracket, Gear 1 bore, outer bracket, and right wall
+    // Inner tip at world x = 29.5 (local -41.5), outer tip at local x = 9.5 (world 80.5)
+    // Total length = 51.0mm, center local x = -16.0mm. Radius 1.38mm fits inside Gear 1's 1.42mm bore.
+    const shaftLength = 51.0;
+    const shaftGeo = new THREE.CylinderGeometry(1.38, 1.38, shaftLength, 16);
     shaftGeo.rotateZ(Math.PI / 2);
     const shaftMesh = new THREE.Mesh(shaftGeo, brassMat);
-    shaftMesh.position.set(-10, 0, 0); // Passes from gear1 to outer crank
+    shaftMesh.position.set(-16.0, 0, 0); // Passes from inner bracket boss through gear1 to outer crank
     shaftMesh.userData = { isCrank: true };
     crankGroup.add(shaftMesh);
 
@@ -1732,7 +1869,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
           >
             <Camera className="w-3.5 h-3.5 text-amber-400" />
             <span className="font-semibold">
-              {activeView === 'photo' && '参考原图'}
+              {activeView === 'photo' && '默认'}
               {activeView === 'top' && '俯视纸带'}
               {activeView === 'gears' && '齿轮特写'}
               {activeView === 'macro' && '滚轮特写'}
@@ -1755,7 +1892,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
                 }`}
               >
                 <Camera className="w-3.5 h-3.5" />
-                <span>参考原图视角</span>
+                <span>默认视角</span>
               </button>
               <button
                 type="button"
