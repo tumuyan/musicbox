@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { SongData, MUSIC_BOX_SCALE, TOTAL_TINES } from '../types/musicBox';
 import { musicBoxSynth } from '../audio/MusicBoxSynth';
-import { Camera, RotateCcw, Eye, Disc, Cog, Sliders, ChevronDown, ChevronUp, Move } from 'lucide-react';
+import { Camera, RotateCcw, Eye, Disc, Cog, Sliders, ChevronDown, ChevronUp, Move, Maximize2, Minimize2, Play, Pause } from 'lucide-react';
 
 interface MusicBox3DProps {
   song: SongData;
@@ -21,6 +21,9 @@ interface MusicBox3DProps {
   isPlaying: boolean;
   onStepChange?: (step: number) => void;
   onTinePluck?: (tineIndex: number) => void;
+  isMaximized?: boolean;
+  onToggleMaximize?: () => void;
+  onTogglePlay?: () => void;
 }
 
 export const MusicBox3D: React.FC<MusicBox3DProps> = ({
@@ -29,6 +32,9 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   isPlaying,
   onStepChange,
   onTinePluck,
+  isMaximized = false,
+  onToggleMaximize,
+  onTogglePlay,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeView, setActiveView] = useState<'photo' | 'top' | 'front' | 'macro' | 'gears'>('photo');
@@ -1699,15 +1705,21 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       if (!container || !rendererRef.current || !cameraRef.current) return;
       const newW = container.clientWidth;
       const newH = container.clientHeight;
+      if (newW === 0 || newH === 0) return;
       cameraRef.current.aspect = newW / newH;
       cameraRef.current.updateProjectionMatrix();
       rendererRef.current.setSize(newW, newH);
     };
 
     window.addEventListener('resize', handleResize);
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+    resizeObserver.observe(container);
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
       renderer.dispose();
       walnutTex.dispose();
@@ -1723,6 +1735,18 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   useEffect(() => {
     updatePaperTexture();
   }, [currentStep, song, updatePaperTexture]);
+
+  // Keyboard shortcut: Esc to exit maximized/immersive mode
+  useEffect(() => {
+    if (!isMaximized) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onToggleMaximize?.();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMaximized, onToggleMaximize]);
 
 
 
@@ -1830,7 +1854,7 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
   };
 
   return (
-    <div className="relative w-full h-full min-h-[460px] bg-stone-950 overflow-hidden select-none flex flex-col">
+    <div className={`relative w-full h-full ${isMaximized ? 'h-screen' : 'min-h-[460px]'} bg-stone-950 overflow-hidden select-none flex flex-col`}>
       {/* 3D WebGL Canvas Container */}
       <div
         ref={containerRef}
@@ -1851,167 +1875,185 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
       />
 
       {/* 1. Floating Camera Angle Bar (Top-Left) */}
-      <div 
-        className="absolute top-3 left-3 sm:top-4 sm:left-4 z-20 flex items-center gap-1.5 p-1 bg-stone-900/95 backdrop-blur-md border border-stone-800/90 rounded-xl shadow-xl pointer-events-auto select-none"
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-      >
-        {/* Preset Selector Dropdown */}
-        <div className="relative">
+      {!isMaximized && (
+        <div 
+          className="absolute top-3 left-3 sm:top-4 sm:left-4 z-20 flex items-center gap-1.5 p-1 bg-stone-900/95 backdrop-blur-md border border-stone-800/90 rounded-xl shadow-xl pointer-events-auto select-none"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          {/* Preset Selector Dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsViewMenuOpen(!isViewMenuOpen);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-stone-800 hover:bg-stone-700/90 text-amber-200 border border-amber-800/50 transition-colors whitespace-nowrap cursor-pointer shadow-xs"
+              title="点击切换3D观察视角"
+            >
+              <Camera className="w-3.5 h-3.5 text-amber-400" />
+              <span className="font-semibold">
+                {activeView === 'photo' && '默认'}
+                {activeView === 'top' && '俯视纸带'}
+                {activeView === 'gears' && '齿轮特写'}
+                {activeView === 'macro' && '滚轮特写'}
+                {activeView === 'front' && '进纸槽'}
+              </span>
+              <ChevronDown className={`w-3 h-3 text-stone-400 transition-transform ${isViewMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isViewMenuOpen && (
+              <div className="absolute top-full left-0 mt-1.5 w-40 bg-stone-900/95 backdrop-blur-md border border-stone-700/80 rounded-xl shadow-2xl p-1 z-50 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-150">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCameraPreset('photo');
+                    setIsViewMenuOpen(false);
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    activeView === 'photo' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                  }`}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>默认视角</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCameraPreset('top');
+                    setIsViewMenuOpen(false);
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    activeView === 'top' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>俯视纸带</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCameraPreset('gears');
+                    setIsViewMenuOpen(false);
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    activeView === 'gears' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                  }`}
+                >
+                  <Cog className="w-3.5 h-3.5" />
+                  <span>齿轮传动特写</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCameraPreset('macro');
+                    setIsViewMenuOpen(false);
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    activeView === 'macro' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                  }`}
+                >
+                  <Disc className="w-3.5 h-3.5" />
+                  <span>压纸片与粗滚轮</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCameraPreset('front');
+                    setIsViewMenuOpen(false);
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    activeView === 'front' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>前面板进纸槽</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="w-[1px] h-4 bg-stone-800 mx-0.5 shrink-0" />
+
+          {/* View Mode Toggle: Orbit vs Pan */}
+          <div className="flex items-center bg-stone-950/80 p-0.5 rounded-lg border border-stone-800/80 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setNavMode('orbit');
+              }}
+              className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                navMode === 'orbit'
+                  ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
+                  : 'text-stone-400 hover:text-stone-200'
+              }`}
+              title="左键拖拽旋转视角 (也可随时按住鼠标右键平移)"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>旋转</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setNavMode('pan');
+              }}
+              className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                navMode === 'pan'
+                  ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
+                  : 'text-stone-400 hover:text-stone-200'
+              }`}
+              title="拖拽平移移动视角 (也可按住右键/中键/Shift直接平移)"
+            >
+              <Move className="w-3 h-3" />
+              <span>平移</span>
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              setIsViewMenuOpen(!isViewMenuOpen);
+              targetCameraTarget.current.set(4, 2, 2);
+              setCameraPreset('photo');
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-stone-800 hover:bg-stone-700/90 text-amber-200 border border-amber-800/50 transition-colors whitespace-nowrap cursor-pointer shadow-xs"
-            title="点击切换3D观察视角"
+            className="flex items-center gap-1 px-2 py-1 text-xs text-stone-400 hover:text-stone-200 hover:bg-stone-800/60 rounded-md transition-colors cursor-pointer shrink-0"
+            title="复位视角和居中位置"
           >
-            <Camera className="w-3.5 h-3.5 text-amber-400" />
-            <span className="font-semibold">
-              {activeView === 'photo' && '默认'}
-              {activeView === 'top' && '俯视纸带'}
-              {activeView === 'gears' && '齿轮特写'}
-              {activeView === 'macro' && '滚轮特写'}
-              {activeView === 'front' && '进纸槽'}
-            </span>
-            <ChevronDown className={`w-3 h-3 text-stone-400 transition-transform ${isViewMenuOpen ? 'rotate-180' : ''}`} />
+            <span>复位</span>
           </button>
 
-          {isViewMenuOpen && (
-            <div className="absolute top-full left-0 mt-1.5 w-40 bg-stone-900/95 backdrop-blur-md border border-stone-700/80 rounded-xl shadow-2xl p-1 z-50 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-150">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCameraPreset('photo');
-                  setIsViewMenuOpen(false);
-                }}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                  activeView === 'photo' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
-                }`}
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span>默认视角</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCameraPreset('top');
-                  setIsViewMenuOpen(false);
-                }}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                  activeView === 'top' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>俯视纸带</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCameraPreset('gears');
-                  setIsViewMenuOpen(false);
-                }}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                  activeView === 'gears' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
-                }`}
-              >
-                <Cog className="w-3.5 h-3.5" />
-                <span>齿轮传动特写</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCameraPreset('macro');
-                  setIsViewMenuOpen(false);
-                }}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                  activeView === 'macro' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
-                }`}
-              >
-                <Disc className="w-3.5 h-3.5" />
-                <span>压纸片与粗滚轮</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCameraPreset('front');
-                  setIsViewMenuOpen(false);
-                }}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                  activeView === 'front' ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs' : 'text-stone-300 hover:bg-stone-800'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>前面板进纸槽</span>
-              </button>
-            </div>
+          {onToggleMaximize && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMaximize();
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-amber-300 hover:text-amber-100 hover:bg-stone-800/80 rounded-md transition-colors cursor-pointer shrink-0 border border-amber-800/50 hover:border-amber-600 ml-0.5"
+              title="最大化 / 沉浸式查看3D八音盒（收起所有操作控件）"
+            >
+              <Maximize2 className="w-3 h-3 text-amber-400" />
+              <span>最大化</span>
+            </button>
           )}
         </div>
-
-        <div className="w-[1px] h-4 bg-stone-800 mx-0.5 shrink-0" />
-
-        {/* View Mode Toggle: Orbit vs Pan */}
-        <div className="flex items-center bg-stone-950/80 p-0.5 rounded-lg border border-stone-800/80 shrink-0">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setNavMode('orbit');
-            }}
-            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-              navMode === 'orbit'
-                ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
-                : 'text-stone-400 hover:text-stone-200'
-            }`}
-            title="左键拖拽旋转视角 (也可随时按住鼠标右键平移)"
-          >
-            <RotateCcw className="w-3 h-3" />
-            <span>旋转</span>
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setNavMode('pan');
-            }}
-            className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-              navMode === 'pan'
-                ? 'bg-amber-600 text-stone-950 font-semibold shadow-xs'
-                : 'text-stone-400 hover:text-stone-200'
-            }`}
-            title="拖拽平移移动视角 (也可按住右键/中键/Shift直接平移)"
-          >
-            <Move className="w-3 h-3" />
-            <span>平移</span>
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            targetCameraTarget.current.set(4, 2, 2);
-            setCameraPreset('photo');
-          }}
-          className="flex items-center gap-1 px-2 py-1 text-xs text-stone-400 hover:text-stone-200 hover:bg-stone-800/60 rounded-md transition-colors cursor-pointer shrink-0"
-          title="复位视角和居中位置"
-        >
-          <span>复位</span>
-        </button>
-      </div>
+      )}
 
       {/* 2. Floating Lid Angle & Glass Material Control Panel (Top-Right) */}
-      <div 
-        className="absolute top-4 right-4 z-20 pointer-events-auto"
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-      >
+      {!isMaximized && (
+        <div 
+          className="absolute top-4 right-4 z-20 pointer-events-auto"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
         {isControlsExpanded ? (
           <div className="w-80 bg-stone-900/95 backdrop-blur-md border border-stone-700/80 rounded-2xl p-4 shadow-2xl space-y-3.5 text-xs text-stone-200 select-none">
             {/* Header */}
@@ -2239,6 +2281,51 @@ export const MusicBox3D: React.FC<MusicBox3DProps> = ({
           </button>
         )}
       </div>
+      )}
+
+      {/* 3. Small Floating Restore Control when in Immersive Maximize Mode */}
+      {isMaximized && (
+        <div 
+          className="absolute top-4 right-4 z-50 pointer-events-auto select-none flex items-center gap-2"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          {onTogglePlay && (
+            <button
+              type="button"
+              onClick={() => {
+                musicBoxSynth.resume();
+                onTogglePlay();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-900/90 hover:bg-stone-800 text-stone-200 hover:text-white border border-stone-700/80 rounded-full shadow-2xl backdrop-blur-md transition-all cursor-pointer text-xs font-medium"
+              title={isPlaying ? '暂停播放' : '继续播放'}
+            >
+              {isPlaying ? (
+                <>
+                  <Pause className="w-3.5 h-3.5 text-amber-400 fill-current" />
+                  <span>暂停</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5 text-amber-400 fill-current ml-0.5" />
+                  <span>播放</span>
+                </>
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onToggleMaximize}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-stone-900/95 hover:bg-stone-800 text-amber-200 hover:text-amber-100 border border-amber-600/70 hover:border-amber-400 rounded-full shadow-2xl backdrop-blur-md transition-all cursor-pointer text-xs font-medium group"
+            title="退出沉浸模式，恢复所有操作控件 (快捷键: Esc)"
+          >
+            <Minimize2 className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+            <span>恢复界面</span>
+            <kbd className="text-[10px] bg-stone-800 text-stone-400 px-1.5 py-0.5 rounded font-mono ml-0.5">Esc</kbd>
+          </button>
+        </div>
+      )}
     </div>
   );
 };

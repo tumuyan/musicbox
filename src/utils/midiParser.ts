@@ -129,6 +129,8 @@ export async function parseMidiFile(file: File | ArrayBuffer, transposeSemitones
     timeSignature,
     totalSteps,
     holes,
+    isCustom: true,
+    importedAt: Date.now(),
   };
 
   return {

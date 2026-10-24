@@ -1,11 +1,5 @@
-/**
- * Playback Transport & Song Management Bar
- */
-
-import React, { useRef } from 'react';
+import React from 'react';
 import { SongData } from '../types/musicBox';
-import { PRESET_SONGS } from '../data/presetSongs';
-import { parseMidiFile, exportSongToMidi } from '../utils/midiParser';
 import { musicBoxSynth } from '../audio/MusicBoxSynth';
 import {
   Play,
@@ -13,20 +7,20 @@ import {
   RotateCcw,
   Volume2,
   VolumeX,
-  Upload,
-  Download,
   Repeat,
-  Image as ImageIcon,
   SlidersHorizontal,
-  ChevronDown,
-  ChevronUp,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { getStepsPerMeasure, getTotalMeasures, autoAlignSongByBpm } from '../utils/bpmAlign';
 
 interface TransportControlsProps {
   currentSong: SongData;
+  presetSongs: SongData[];
+  customSongs: SongData[];
   onSelectSong: (song: SongData) => void;
+  onDeleteSong?: (songId: string) => void;
+  onSongChange: (song: SongData) => void;
   isPlaying: boolean;
   onTogglePlay: () => void;
   currentStep: number;
@@ -39,7 +33,11 @@ interface TransportControlsProps {
 
 export const TransportControls: React.FC<TransportControlsProps> = ({
   currentSong,
+  presetSongs,
+  customSongs,
   onSelectSong,
+  onDeleteSong,
+  onSongChange,
   isPlaying,
   onTogglePlay,
   currentStep,
@@ -49,10 +47,15 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
   onToggleLoop,
   onOpenReferenceModal,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [volume, setVolume] = React.useState<number>(85);
   const [isMuted, setIsMuted] = React.useState<boolean>(false);
   const [isSettingsExpanded, setIsSettingsExpanded] = React.useState<boolean>(false);
+
+  const allSongs = React.useMemo(() => {
+    return [...presetSongs, ...customSongs];
+  }, [presetSongs, customSongs]);
+
+  const isCurrentSongCustom = customSongs.some((s) => s.id === currentSong.id);
 
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
@@ -66,38 +69,10 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
   };
 
   const handleBpmChange = (newBpm: number) => {
-    onSelectSong({
+    onSongChange({
       ...currentSong,
       bpm: newBpm,
     });
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const result = await parseMidiFile(file);
-      onSelectSong(result.song);
-      onRewind();
-    } catch (err) {
-      console.error('Failed to parse MIDI file:', err);
-      window.alert('MIDI文件解析失败，请确保上传标准.mid格式文件。');
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const handleExportMidi = () => {
-    const blob = exportSongToMidi(currentSong);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentSong.title.replace(/\s+/g, '_')}.mid`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   const handleProgressWheel = (e: React.WheelEvent) => {
@@ -123,29 +98,51 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
       <div className="max-w-7xl mx-auto flex flex-col gap-2">
         {/* Desktop Layout (md and up): Clean, unified single row */}
         <div className="hidden md:flex items-center justify-between gap-4">
-          {/* Zone 1: Preset Song Selector & Info */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Zone 1: Preset & Custom Song Selector & Info */}
+          <div className="flex items-center gap-2 shrink-0">
             <label className="text-xs text-stone-400 font-medium whitespace-nowrap">曲目:</label>
-            <select
-              value={currentSong.id}
-              onChange={(e) => {
-                const selected = PRESET_SONGS.find(s => s.id === e.target.value);
-                if (selected) {
-                  onSelectSong(selected);
-                  onRewind();
-                }
-              }}
-              className="bg-stone-800 border border-stone-700 text-stone-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-600 transition-colors w-44 lg:w-56 truncate cursor-pointer"
-            >
-              {PRESET_SONGS.map((song) => (
-                <option key={song.id} value={song.id}>
-                  {song.title} ({song.composer})
-                </option>
-              ))}
-              {!PRESET_SONGS.some(s => s.id === currentSong.id) && (
-                <option value={currentSong.id}>{currentSong.title} (自定)</option>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={currentSong.id}
+                onChange={(e) => {
+                  const selected = allSongs.find((s) => s.id === e.target.value);
+                  if (selected) {
+                    onSelectSong(selected);
+                  }
+                }}
+                className="bg-stone-800 border border-stone-700 text-stone-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-600 transition-colors w-44 lg:w-56 truncate cursor-pointer"
+              >
+                <optgroup label="经典预设曲目">
+                  {presetSongs.map((song) => (
+                    <option key={song.id} value={song.id}>
+                      {song.title} ({song.composer})
+                    </option>
+                  ))}
+                </optgroup>
+                {customSongs.length > 0 && (
+                  <optgroup label={`已导入曲目 (${customSongs.length})`}>
+                    {customSongs.map((song) => (
+                      <option key={song.id} value={song.id}>
+                        🎵 {song.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {!allSongs.some((s) => s.id === currentSong.id) && (
+                  <option value={currentSong.id}>{currentSong.title} (自定)</option>
+                )}
+              </select>
+
+              {isCurrentSongCustom && onDeleteSong && (
+                <button
+                  onClick={() => onDeleteSong(currentSong.id)}
+                  className="p-1.5 text-stone-400 hover:text-red-400 hover:bg-stone-800 rounded-lg transition-colors cursor-pointer"
+                  title="从曲目列表中移除此已导入曲目"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               )}
-            </select>
+            </div>
           </div>
 
           {/* Zone 2: Playback & Scrubber */}
@@ -238,7 +235,7 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
               <button
                 onClick={() => {
                   const aligned = autoAlignSongByBpm(currentSong);
-                  onSelectSong(aligned);
+                  onSongChange(aligned);
                 }}
                 className="flex items-center gap-1 px-2 py-0.5 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-stone-950 border border-amber-600/40 rounded text-xs transition-colors cursor-pointer group shadow-xs"
                 title="分析乐曲音符并自动测算最佳BPM，使所有孔吸附对齐到格线"
@@ -272,35 +269,6 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
                 className="w-14 lg:w-16 h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
               />
             </div>
-
-            <span className="text-stone-700">|</span>
-
-            {/* MIDI Import / Export */}
-            <div className="flex items-center gap-1.5">
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".mid,.midi"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-1 px-2 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg transition-colors cursor-pointer"
-                title="导入任意MIDI乐曲"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                <span>导入</span>
-              </button>
-              <button
-                onClick={handleExportMidi}
-                className="flex items-center gap-1 px-2 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg transition-colors cursor-pointer"
-                title="导出MIDI文件"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>导出</span>
-              </button>
-            </div>
           </div>
         </div>
 
@@ -308,26 +276,48 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
         <div className="flex md:hidden flex-col gap-2">
           {/* Row 1: Song Select + Core Playback + Settings Toggle */}
           <div className="flex items-center justify-between gap-2">
-            <select
-              value={currentSong.id}
-              onChange={(e) => {
-                const selected = PRESET_SONGS.find(s => s.id === e.target.value);
-                if (selected) {
-                  onSelectSong(selected);
-                  onRewind();
-                }
-              }}
-              className="flex-1 min-w-0 bg-stone-800 border border-stone-700 text-stone-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-600 transition-colors truncate cursor-pointer"
-            >
-              {PRESET_SONGS.map((song) => (
-                <option key={song.id} value={song.id}>
-                  {song.title} ({song.composer})
-                </option>
-              ))}
-              {!PRESET_SONGS.some(s => s.id === currentSong.id) && (
-                <option value={currentSong.id}>{currentSong.title} (自定)</option>
+            <div className="flex-1 min-w-0 flex items-center gap-1">
+              <select
+                value={currentSong.id}
+                onChange={(e) => {
+                  const selected = allSongs.find((s) => s.id === e.target.value);
+                  if (selected) {
+                    onSelectSong(selected);
+                  }
+                }}
+                className="w-full bg-stone-800 border border-stone-700 text-stone-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-600 transition-colors truncate cursor-pointer"
+              >
+                <optgroup label="经典预设曲目">
+                  {presetSongs.map((song) => (
+                    <option key={song.id} value={song.id}>
+                      {song.title} ({song.composer})
+                    </option>
+                  ))}
+                </optgroup>
+                {customSongs.length > 0 && (
+                  <optgroup label={`已导入曲目 (${customSongs.length})`}>
+                    {customSongs.map((song) => (
+                      <option key={song.id} value={song.id}>
+                        🎵 {song.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {!allSongs.some((s) => s.id === currentSong.id) && (
+                  <option value={currentSong.id}>{currentSong.title} (自定)</option>
+                )}
+              </select>
+
+              {isCurrentSongCustom && onDeleteSong && (
+                <button
+                  onClick={() => onDeleteSong(currentSong.id)}
+                  className="p-1.5 text-stone-400 hover:text-red-400 hover:bg-stone-800 rounded-lg transition-colors cursor-pointer shrink-0"
+                  title="移除此已导入曲目"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               )}
-            </select>
+            </div>
 
             {/* Playback buttons */}
             <div className="flex items-center gap-1 shrink-0">
@@ -450,26 +440,6 @@ export const TransportControls: React.FC<TransportControlsProps> = ({
                     className="flex-1 h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
                   />
                   <span className="font-mono text-stone-300 tabular-nums text-[11px] w-7 text-right">{isMuted ? 0 : volume}%</span>
-                </div>
-              </div>
-
-              {/* Action buttons row */}
-              <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-800/80">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1 px-2.5 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg transition-colors cursor-pointer border border-stone-700/60"
-                  >
-                    <Upload className="w-3 h-3 text-amber-400" />
-                    <span>导入MIDI</span>
-                  </button>
-                  <button
-                    onClick={handleExportMidi}
-                    className="flex items-center gap-1 px-2.5 py-1 text-xs bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg transition-colors cursor-pointer border border-stone-700/60"
-                  >
-                    <Download className="w-3 h-3 text-amber-400" />
-                    <span>导出MIDI</span>
-                  </button>
                 </div>
               </div>
             </div>

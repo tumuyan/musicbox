@@ -25,6 +25,8 @@ export interface SongData {
   timeSignature: [number, number]; // e.g. [4, 4] or [3, 4]
   totalSteps: number;
   holes: PunchHole[];
+  isCustom?: boolean;
+  importedAt?: number;
 }
 
 /**
